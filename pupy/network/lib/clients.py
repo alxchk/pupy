@@ -25,10 +25,12 @@ except ImportError as e:
 
 logger = getLogger('clients')
 
+
 class PupyClient(object):
     def connect(self, host, port, timeout=4):
         """ return a socket after connection """
         raise NotImplementedError("connect not implemented")
+
 
 class PupyAsyncClient(object):
     def connect(self, host, port, timeout=10):
@@ -36,6 +38,7 @@ class PupyAsyncClient(object):
         self.port=port
         self.timeout=timeout
         return self.host, self.port, self.timeout
+
 
 class PupyTCPClient(PupyClient):
     def __init__(self, family = socket.AF_UNSPEC, socktype = socket.SOCK_STREAM, timeout = 4, nodelay = False, keepalive = True):
@@ -80,6 +83,7 @@ class PupyTCPClient(PupyClient):
         logger.debug('Connected to: %s, socket=%s', sockaddr, s)
 
         return s
+
 
 class PupyProxifiedTCPClient(PupyTCPClient):
     def __init__(self, *args, **kwargs):
@@ -129,6 +133,7 @@ class PupyProxifiedTCPClient(PupyTCPClient):
             'Connected to: %s:%d: %s', host, port, s)
 
         return s
+
 
 class PupySSLClient(PupyTCPClient):
     def __init__(self, *args, **kwargs):
@@ -234,8 +239,10 @@ class PupySSLClient(PupyTCPClient):
 
         return wrapped_socket
 
+
 class PupyProxifiedSSLClient(PupySSLClient, PupyProxifiedTCPClient):
     pass
+
 
 class PupyUDPClient(PupyClient):
     def __init__(self, family = socket.AF_UNSPEC, socktype = socket.SOCK_DGRAM, timeout=3):

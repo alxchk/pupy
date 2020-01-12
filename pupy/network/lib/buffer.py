@@ -300,9 +300,13 @@ class Buffer(object):
         Append 'data' to the buffer.
         """
 
+        written = len(data)
+
         self.append(data)
         if notify:
             self.on_write()
+
+        return written
 
     def flush(self):
         if self.compressor:
@@ -350,9 +354,16 @@ class Buffer(object):
 
                 if modificator:
                     chunk = modificator(bytes(chunk))
+                    lchunk = len(chunk)
 
-                stream.write(chunk, notify=False)
-                total_write += len(chunk)
+                written = stream.write(chunk, notify=False)
+
+                if written > 0:
+                    total_write += written
+
+                if written != lchunk:
+                    # Incomplete write
+                    break
 
                 if n is not None and total_read >= n:
                     break
@@ -383,13 +394,21 @@ class Buffer(object):
 
                 if modificator:
                     chunk = modificator(chunk)
+                    lchunk = len(chunk)
+
+                written = None
 
                 if forced_notify:
-                    stream.write(chunk)
+                    written = stream.write(chunk)
                 else:
-                    stream.write(chunk, notify=False)
+                    written = stream.write(chunk, notify=False)
 
-                total_write += len(chunk)
+                if written > 0:
+                    total_write += written
+
+                if written != lchunk:
+                    # Incomplete write
+                    break
 
         if notify and not forced_notify:
             stream.flush()

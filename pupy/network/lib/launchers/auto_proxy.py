@@ -14,7 +14,7 @@ from network.lib.utils import (
 )
 
 from network.lib.base_launcher import (
-    BaseLauncher, LauncherArgumentParser, LauncherError
+    BaseNetworkLauncher, LauncherArgumentParser, LauncherError
 )
 
 from network.lib.proxies import (
@@ -31,7 +31,7 @@ from . import getLogger
 logger = getLogger('auto_proxy')
 
 
-class AutoProxyLauncher(BaseLauncher):
+class AutoProxyLauncher(BaseNetworkLauncher):
     '''
     Communicate to server via proxy or chain of proxies
     '''

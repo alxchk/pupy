@@ -14,7 +14,7 @@ from network.lib.utils import (
 )
 
 from network.lib.base_launcher import (
-    LauncherError, LauncherArgumentParser, BaseLauncher
+    LauncherError, LauncherArgumentParser, BaseNetworkLauncher
 )
 
 from network.conf import transports
@@ -25,7 +25,7 @@ from . import getLogger
 logger = getLogger('connect')
 
 
-class ConnectLauncher(BaseLauncher):
+class ConnectLauncher(BaseNetworkLauncher):
     """ simple launcher that uses TCP connect with a chosen transport """
 
     name = 'connect'

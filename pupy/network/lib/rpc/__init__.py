@@ -43,7 +43,7 @@ Classic-style usage::
 """
 
 __all__ = (
-    'Channel', 'Connection', 'Service', 'BaseNetref', 'AsyncResult',
+    'Connection', 'Service', 'BaseNetref', 'AsyncResult',
     'GenericException', 'AsyncResultTimeout', 'VoidService', 'SlaveService',
     'nowait', 'timed', 'buffiter', 'BgServingThread', 'restricted',
     'classic',
@@ -51,7 +51,7 @@ __all__ = (
 )
 
 from network.lib.rpc.core import (
-    Channel, Connection, Service, BaseNetref, AsyncResult,
+    Connection, Service, BaseNetref, AsyncResult,
     GenericException, AsyncResultTimeout, VoidService, SlaveService
 )
 

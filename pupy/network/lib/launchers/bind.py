@@ -10,10 +10,10 @@ import argparse
 from network.lib import utils
 from network.conf import transports
 
-from ..base_launcher import BaseLauncher, LauncherArgumentParser, LauncherError
+from ..base_launcher import BaseNetworkLauncher, LauncherArgumentParser, LauncherError
 
 
-class BindLauncher(BaseLauncher):
+class BindLauncher(BaseNetworkLauncher):
     """ start a simple bind launcher with the specified transport """
 
     name = 'bind'

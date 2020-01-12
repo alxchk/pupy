@@ -62,7 +62,7 @@ from network.lib.utils import parse_transports_args
 from network.lib.base import chain_transports
 from network.lib.transports.httpwrap import PupyHTTPWrapperServer
 from network.lib.igd import IGDClient, UPNPError
-from network.lib.streams.PupySocketStream import PupyChannel
+from network.lib.channel import PupyChannel
 
 from triggers import Triggers
 

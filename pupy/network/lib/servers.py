@@ -12,7 +12,7 @@ from Queue import Queue, Empty
 from threading import Thread
 from netaddr import IPAddress, AddrFormatError
 
-from streams.PupySocketStream import PupyChannel
+from network.lib.channel import PupyChannel
 from network.lib.connection import PupyConnection, PupyConnectionThread
 from network.lib.rpc.utils.server import ThreadedServer, AuthenticationError
 
@@ -20,6 +20,18 @@ from network.lib.igd import UPNPError
 
 
 class PupyTCPServer(ThreadedServer):
+    __slots__ = (
+        'stream_class', 'transport_class',
+        'transport_kwargs', 'pupy_srv',
+        'logger',
+
+        'igd', 'igd_mapping',
+
+        'external', 'external_port',
+
+        'ping', 'ping_interval', 'ping_timeout'
+    )
+
     def __init__(self, *args, **kwargs):
 
         if "stream" not in kwargs:
@@ -105,9 +117,9 @@ class PupyTCPServer(ThreadedServer):
                 self.igd_mapping = True
             except UPNPError as e:
                 self.logger.warn(
-                    "Couldn't create IGD mapping [TCP {} -> {}, IP={}]: {}".format(
-                        self.external_port, self.port, self.igd.intIP, e.description))
-
+                    "Couldn't create IGD mapping [TCP %s -> %s, IP=%s]: %s",
+                    self.external_port, self.port, self.igd.intIP, e.description
+                )
 
     def _setup_connection(self, sock, queue):
         '''Authenticate a client and if it succeeds, wraps the socket in a connection object.

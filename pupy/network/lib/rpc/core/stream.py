@@ -180,11 +180,18 @@ class SocketStream(Stream):
         return BYTES_LITERAL("").join(data)
 
     def write(self, data):
+        written = 0
+
         try:
             while data:
                 count = self.sock.send(data[:self.MAX_IO_CHUNK])
-                data = data[count:]
+                if count > 0:
+                    data = data[count:]
+                    written += count
+
         except socket.error:
             ex = sys.exc_info()[1]
             self.close()
             raise EOFError(ex)
+
+        return written

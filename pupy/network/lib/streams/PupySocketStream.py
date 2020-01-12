@@ -21,343 +21,27 @@ try:
 except ImportError:
     logger.warning('Datagram based stream is not available: KCP missing')
 
-import sys
 import os
-import socket
 import time
-import errno
 import traceback
-import zlib
 
 from network.lib.buffer import Buffer
-from network.lib.rpc.lib.compat import select, select_error, get_exc_errno
-from network.lib.rpc.core import SocketStream, Channel
+from network.lib.endpoints.abstract_socket import AbstractSocket
+from network.lib.streams.PupyGenericStream import PupyGenericStream
 
 import threading
 
-class addGetPeer(object):
-    """ add some functions needed by some obfsproxy transports """
 
-    def __init__(self, peer):
-        self.peer=peer
+class PupySocketStream(PupyGenericStream):
+    MAX_IO_CHUNK = 32000
+    KEEP_ALIVE_REQUIRED = False
 
-    def getPeer(self):
-        return self.peer
+    __slots__ = ()
 
-class PupyChannel(Channel):
-    def __init__(self, *args, **kwargs):
-        super(PupyChannel, self).__init__(*args, **kwargs)
-        self.compress = True
-        self.COMPRESSION_LEVEL = 5
-        self.COMPRESSION_THRESHOLD = self.stream.MAX_IO_CHUNK
-        self._send_channel_lock = threading.Lock()
-        self._recv_channel_lock = threading.Lock()
-
-    def consume(self):
-        if hasattr(self.stream, 'consume'):
-            return self.stream.consume()
-
-    def wake(self):
-        if hasattr(self.stream, 'wake'):
-            return self.stream.wake()
-
-    def recv(self):
-        # print "RECV", threading.currentThread()
-        with self._recv_channel_lock:
-            data = self._recv()
-
-            if __debug__:
-                logger.debug('channel: recv=%s', len(data) if data else 'NONE')
-
-            return data
-
-    def send(self, data):
-        with self._send_channel_lock:
-            if __debug__:
-                logger.debug('channel: send=%s', len(data))
-
-            self._send(data)
-
-    def _recv(self):
-        """ Recv logic with interruptions """
-
-        # print "RECV! WAIT FOR LENGTH!"
-
-        packet = self.stream.read(self.FRAME_HEADER.size)
-        # If no packet - then just return
-        if not packet:
-            return None
-
-        header = packet
-
-        while len(header) != self.FRAME_HEADER.size:
-            packet = self.stream.read(self.FRAME_HEADER.size - len(header))
-            if packet:
-                header += packet
-                del packet
-
-        length, compressed = self.FRAME_HEADER.unpack(header)
-        # print "RECV! WAIT FOR LENGTH COMPLETE!"
-
-        required_length = length + len(self.FLUSHER)
-        # print "WAIT FOR", required_length
-
-        decompressor = None
-
-        if compressed:
-            decompressor = zlib.decompressobj()
-
-        buf = Buffer()
-
-        while required_length:
-            packet = self.stream.read(min(required_length, self.COMPRESSION_THRESHOLD))
-            if packet:
-                required_length -= len(packet)
-                # print "GET", len(packet)
-                if not required_length:
-                    packet = packet[:-len(self.FLUSHER)]
-
-                if compressed:
-                    packet = decompressor.decompress(packet)
-                    if not packet:
-                        continue
-
-                if packet:
-                    buf.write(packet)
-
-        if compressed:
-            packet = decompressor.flush()
-            if packet:
-                buf.write(packet)
-
-        # print "COMPLETE!"
-        return buf
-
-    def _send(self, data):
-        """ Smarter compression support """
-        compressed = 0
-
-        ldata = len(data)
-        portion = None
-        lportion = 0
-
-        # print "SEND .. ", ldata
-
-        if self.compress and ldata > self.COMPRESSION_THRESHOLD:
-            portion = data.peek(self.COMPRESSION_THRESHOLD)
-            portion = zlib.compress(portion)
-            lportion = len(portion)
-            if lportion < self.COMPRESSION_THRESHOLD:
-                compressed = 1
-
-        if not compressed:
-            del portion
-            self.stream.write(self.FRAME_HEADER.pack(ldata, compressed), notify=False)
-            self.stream.write(data, notify=False)
-            self.stream.write(self.FLUSHER)
-            # print "SEND .. ", ldata, "DONE"
-            return
-
-        del portion
-
-        compressor = zlib.compressobj(self.COMPRESSION_LEVEL)
-
-        total_length = 0
-        rest = ldata
-        i = 0
-
-        while rest > 0:
-            cdata = data.read(self.COMPRESSION_THRESHOLD)
-
-            lcdata = len(cdata)
-            rest -= lcdata
-            i += lcdata
-
-            portion = compressor.compress(cdata)
-            lportion = len(portion)
-
-            if lportion > 0:
-                total_length += lportion
-                self.stream.write(portion, notify=False)
-
-        portion = compressor.flush()
-        lportion = len(portion)
-        if lportion:
-            total_length += lportion
-            self.stream.write(portion, notify=False)
-
-        del portion, data, cdata
-
-        self.stream.insert(self.FRAME_HEADER.pack(total_length, compressed))
-        # print "SEND WITH TOTAL LENGTH", total_length
-        self.stream.write(self.FLUSHER)
-
-
-class PupySocketStream(SocketStream):
-    def __init__(self, sock, transport_class, transport_kwargs):
-        super(PupySocketStream, self).__init__(sock)
-
-        self.MAX_IO_CHUNK = 32000
-        self.KEEP_ALIVE_REQUIRED = False
-        self.compress = True
-
-        #buffers for transport
-        self.upstream = Buffer(
-            transport_func=addGetPeer(("127.0.0.1", 443)),
-            shared=True
+    def __init__(self, socket, transport_args=[], transport_kwargs={}):
+        super(PupySocketStream, self).__init__(
+            AbstractSocket(socket), transport_args, transport_kwargs
         )
-
-        if sock is None:
-            peername = '127.0.0.1', 0
-        elif type(sock) is tuple:
-            peername = sock[0], sock[1]
-        else:
-            peername = sock.getpeername()
-
-        self.downstream = Buffer(
-            on_write=self._upstream_recv,
-            transport_func=addGetPeer(peername),
-            shared=True
-        )
-
-        self.upstream_lock = threading.Lock()
-        self.downstream_lock = threading.Lock()
-
-        self.transport = transport_class(self, **transport_kwargs)
-
-        #buffers for streams
-        self.buf_in = Buffer()
-        self.buf_out = Buffer()
-
-        self.failed = False
-        try:
-            self.on_connect()
-
-        except Exception:
-            self.failed = True
-            raise
-
-    def on_connect(self):
-        self.transport.on_connect()
-        self._upstream_recv()
-
-    def _read(self):
-        try:
-            buf = self.sock.recv(self.MAX_IO_CHUNK)
-            if __debug__:
-                logger.debug('stream: read=%s', len(buf) if buf else None)
-
-        except socket.timeout:
-            return
-
-        except socket.error:
-            ex = sys.exc_info()[1]
-            if get_exc_errno(ex) in (errno.EAGAIN, errno.EWOULDBLOCK):
-                # windows just has to be a b**ch
-                # edit: some politeness please ;)
-                return
-            self.close()
-            raise EOFError(ex)
-
-        if not buf:
-            self.close()
-            raise EOFError("connection closed by peer")
-
-        self.buf_in.write(buf)
-
-    # The root of evil
-    def poll(self, timeout):
-        if self.closed:
-            raise EOFError('polling on already closed connection')
-        result = (len(self.upstream)>0 or self.sock_poll(timeout))
-        return result
-
-    def sock_poll(self, timeout):
-        with self.downstream_lock:
-            to_close = None
-            to_read = None
-
-            while not (to_close or to_read or self.closed):
-                try:
-                    to_read, _, to_close = select([self.sock], [], [self.sock], timeout)
-                except select_error as r:
-                    if not r.args[0] == errno.EINTR:
-                        to_close = True
-                    continue
-
-                break
-
-            if to_close:
-                raise EOFError('sock_poll error')
-
-            if to_read:
-                self._read()
-                self.transport.downstream_recv(self.buf_in)
-                return True
-            else:
-                return False
-
-    def _upstream_recv(self):
-        """ called as a callback on the downstream.write """
-        if len(self.downstream)>0:
-            if __debug__:
-                logger.debug('stream: send=%s', len(self.downstream))
-
-            self.downstream.write_to(super(PupySocketStream, self))
-
-    def waitfor(self, count):
-        if __debug__:
-            logger.debug('stream: waitfor=%s', count)
-
-        try:
-            while len(self.upstream)<count:
-                if not self.sock_poll(None) and self.closed:
-                    return None
-
-            return self.upstream
-
-        except (EOFError, socket.error):
-            self.close()
-            raise
-
-        except:
-            logger.debug(traceback.format_exc())
-            self.close()
-            raise
-
-    def read(self, count):
-        promise = self.waitfor(count)
-        if promise:
-            return promise.read(count)
-
-    def insert(self, data):
-        with self.upstream_lock:
-            self.buf_out.insert(data)
-
-    def flush(self):
-        self.buf_out.flush()
-
-    def write(self, data, notify=True):
-        if __debug__:
-            logger.debug('stream: write=%s / n=%s',
-                len(data) if data else None, notify)
-
-        try:
-            with self.upstream_lock:
-                self.buf_out.write(data, notify)
-                del data
-                if notify:
-                    self.transport.upstream_recv(self.buf_out)
-            #The write will be done by the _upstream_recv callback on the downstream buffer
-
-        except (EOFError, socket.error):
-            self.close()
-            raise
-
-        except:
-            logger.debug(traceback.format_exc())
-            self.close()
-            raise
 
 
 class PupyUDPSocketStream(object):
@@ -404,13 +88,11 @@ class PupyUDPSocketStream(object):
 
         #buffers for transport
         self.upstream = Buffer(
-            transport_func=addGetPeer(("127.0.0.1", 443)),
             shared=True
         )
 
         self.downstream = Buffer(
             on_write=self._send,
-            transport_func=addGetPeer(self.dst_addr),
             shared=True
         )
 
@@ -565,7 +247,8 @@ class PupyUDPSocketStream(object):
 
         try:
             with self.upstream_lock:
-                self.buf_out.write(data, notify)
+                written = self.buf_out.write(data, notify)
+
                 del data
                 if notify:
                     self.transport.upstream_recv(self.buf_out)
@@ -573,6 +256,8 @@ class PupyUDPSocketStream(object):
         except:
             logger.debug(traceback.format_exc())
             raise
+
+        return written
 
     def consume(self):
         data = False

@@ -3,7 +3,7 @@
 
 __all__ = ['DNSCommandClientLauncher']
 
-from ..base_launcher import BaseLauncher, LauncherArgumentParser, LauncherError
+from ..base_launcher import BaseNetworkLauncher, LauncherArgumentParser, LauncherError
 from ..picocmd.client import DnsCommandsClient
 from ..picocmd.picocmd import ConnectablePort, OnlineStatus, PortQuizPort
 
@@ -188,7 +188,7 @@ class DNSCommandClientLauncher(DnsCommandsClient):
 
         os._exit(0)
 
-class DNSCncLauncher(BaseLauncher):
+class DNSCncLauncher(BaseNetworkLauncher):
     ''' Micro command protocol built over DNS infrastructure '''
 
     name = 'dnscnc'

@@ -169,7 +169,7 @@ class PupyVirtualStream(object):
 
         try:
             with self.upstream_lock:
-                self.buf_out.write(data, notify)
+                written = self.buf_out.write(data, notify)
 
                 del data
 
@@ -178,6 +178,8 @@ class PupyVirtualStream(object):
         except:
             logger.debug(traceback.format_exc())
             raise
+
+        return written
 
     def close(self):
         stack = traceback.extract_stack()

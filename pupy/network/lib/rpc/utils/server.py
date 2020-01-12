@@ -12,7 +12,7 @@ try:
     import Queue
 except ImportError:
     import queue as Queue
-from network.lib.rpc.core import SocketStream, Channel, Connection
+from network.lib.rpc.core import SocketStream, Connection
 from network.lib.rpc.lib import safe_import
 from network.lib.rpc.lib.compat import poll, get_exc_errno
 signal = safe_import("signal")
@@ -184,22 +184,6 @@ class Server(object):
                 pass
             sock.close()
             self.clients.discard(sock)
-
-    def _serve_client(self, sock, credentials):
-        addrinfo = sock.getpeername()
-        if credentials:
-            self.logger.info("welcome %s (%r)", addrinfo, credentials)
-        else:
-            self.logger.info("welcome %s", addrinfo)
-        try:
-            config = dict(self.protocol_config, credentials = credentials,
-                endpoints = (sock.getsockname(), addrinfo), logger = self.logger)
-            conn = Connection(self.service, Channel(SocketStream(sock)),
-                config = config, _lazy = True)
-            conn._init_service()
-            self._handle_connection(conn)
-        finally:
-            self.logger.info("goodbye %s", addrinfo)
 
     def _handle_connection(self, conn):
         """This methoed should implement the server's logic."""

