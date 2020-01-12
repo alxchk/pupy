@@ -594,6 +594,12 @@ class PupyPackageFinder(object):
                 continue
 
             sub_path = module[lpath:]
+            if '/' not in sub_path:
+                if sub_path.endswith(EXTS_ALL):
+                    yield sub_path.rsplit('.', 1)[0], False
+
+                continue
+
             first, rest = sub_path.split('/', 1)
             if first.endswith(EXTS_ALL):
                 yield first.rsplit('.', 1)[0], False
