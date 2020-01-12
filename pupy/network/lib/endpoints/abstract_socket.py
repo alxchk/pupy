@@ -22,7 +22,9 @@ class AbstractSocket(AbstractEndpoint):
 
     def __init__(self, handle):
         self._fileno = handle.fileno()
-        super(AbstractSocket, self).__init__(handle, handle.getsockname())
+        super(AbstractSocket, self).__init__(
+            handle, handle.getpeername()
+        )
 
     def _read_impl(self, timeout):
         to_read = None

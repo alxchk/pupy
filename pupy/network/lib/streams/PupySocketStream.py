@@ -40,6 +40,7 @@ class PupySocketStream(PupyGenericStream):
 
     def __init__(self, socket, transport_args=[], transport_kwargs={}):
         super(PupySocketStream, self).__init__(
+            socket if isinstance(socket, AbstractSocket) else
             AbstractSocket(socket), transport_args, transport_kwargs
         )
 

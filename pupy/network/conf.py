@@ -43,7 +43,7 @@ def add_transport(module_name):
 
 
 def load_network_modules():
-    for loader, module_name, is_pkg in pkgutil.iter_modules(trlib.__path__):
+    for _, module_name, _ in pkgutil.iter_modules(trlib.__path__):
         add_transport(module_name)
 
     try:

@@ -32,14 +32,6 @@ class PupyClient(object):
         raise NotImplementedError("connect not implemented")
 
 
-class PupyAsyncClient(object):
-    def connect(self, host, port, timeout=10):
-        self.host=host
-        self.port=port
-        self.timeout=timeout
-        return self.host, self.port, self.timeout
-
-
 class PupyTCPClient(PupyClient):
     def __init__(self, family = socket.AF_UNSPEC, socktype = socket.SOCK_STREAM, timeout = 4, nodelay = False, keepalive = True):
         super(PupyTCPClient, self).__init__()
