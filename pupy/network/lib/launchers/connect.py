@@ -44,15 +44,25 @@ class ConnectLauncher(BaseNetworkLauncher):
     @classmethod
     def init_argparse(cls):
         cls.arg_parser = LauncherArgumentParser(prog="connect", description=cls.__doc__)
-        cls.arg_parser.add_argument(
+
+        target = cls.arg_parser.add_mutually_exclusive_group()
+        target.add_argument(
+            '-u', '--uri', metavar='<transport+cipher[+cipher..]://[creds]@host:port>[/args?..]',
+            required=True, action='append',
+            help='Universal URI of endpoint to connect'
+        )
+
+        legacy = target.add_argument_group()
+        legacy.add_argument(
             '-c', '--host', metavar='<host:port>', required=True, action='append',
             help='host:port of the pupy server to connect to. You can provide multiple '
             '--host arguments to attempt to connect to multiple IPs'
         )
-        cls.arg_parser.add_argument(
+        legacy.add_argument(
             '-t', '--transport', choices=transports, default="ssl",
             help='The transport to use'
         )
+
         cls.arg_parser.add_argument(
             'transport_args', nargs=argparse.REMAINDER,
             help='Transport arguments: key=value key=value ...'

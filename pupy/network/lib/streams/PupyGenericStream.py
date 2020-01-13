@@ -16,6 +16,7 @@ logger = getLogger('pgs')
 
 class PupyGenericStream(object):
     KEEP_ALIVE_REQUIRED = False
+
     compress = True
 
     __slots__ = (
@@ -37,6 +38,7 @@ class PupyGenericStream(object):
         self.upstream = Buffer(shared=True)
         self.downstream = Buffer(
             on_write=self._flush_to_ep,
+            chunk_size=self._ep.capabilities.max_io_size,
             shared=True
         )
 

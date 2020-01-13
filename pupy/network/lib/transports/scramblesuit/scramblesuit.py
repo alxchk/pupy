@@ -32,7 +32,7 @@ class ReadPassFile(argparse.Action):
         with open(values) as f:
             setattr(namespace, self.dest, f.readline().strip())
 
-class ScrambleSuitTransport(base.BaseTransport):
+class ScrambleSuitTransport(base.PupyBaseTransport):
 
     """
     Implement the ScrambleSuit protocol.
@@ -203,7 +203,7 @@ class ScrambleSuitTransport(base.BaseTransport):
             self.sendCrypter, self.recvCrypter = self.recvCrypter, \
                                                  self.sendCrypter
 
-    def circuitConnected(self):
+    def on_connect(self):
         """
         Initiate a ScrambleSuit handshake.
 
@@ -461,7 +461,7 @@ class ScrambleSuitTransport(base.BaseTransport):
                         flags=const.FLAG_PRNG_SEED)
         self.flushSendBuffer()
 
-    def receivedDownstream(self, data):
+    def downstream_recv(self, data):
         """
         Receives and processes data coming from the remote machine.
 

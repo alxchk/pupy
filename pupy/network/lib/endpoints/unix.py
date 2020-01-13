@@ -4,7 +4,9 @@ __all__ = ('register',)
 
 import sys
 
-from socket import socket
+from socket import (
+    socket, AF_UNIX, SOCK_STREAM
+)
 from .abstract_socket import AbstractSocket
 
 
@@ -18,11 +20,11 @@ class UnixSocket(AbstractSocket):
     pass
 
 
-def from_uri(uri, *args, **kwargs):
+def from_uri(schemas, uri, *args, **kwargs):
     if uri.shema.lower() != 'unix':
         raise ValueError('Invalid schema')
 
-    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock = socket(AF_UNIX, SOCK_STREAM)
     sock.connect(uri.path)
 
     return AbstractSocket(sock)

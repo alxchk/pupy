@@ -7,7 +7,8 @@ from os import write, close, unlink
 from socket import (
     socket, getaddrinfo,
     AF_INET, AF_UNSPEC,
-    SOCK_DGRAM, SOCK_STREAM
+    SOCK_DGRAM, SOCK_STREAM,
+    IPPROTO_TCP
 )
 
 from ssl import (
@@ -22,17 +23,36 @@ from .abstract_socket import AbstractSocket
 
 from network.lib import getLogger
 
+from socket import SOL_SOCKET, SO_KEEPALIVE
+
+try:
+    from socket import (
+        TCP_KEEPIDLE, TCP_KEEPINTVL, TCP_KEEPCNT
+    )
+except ImportError:
+    TCP_KEEPIDLE = None
+    TCP_KEEPINTVL = None
+    TCP_KEEPCNT = None
+
+try:
+    from socket import SIO_KEEPALIVE_VALS
+except ImportError:
+    SIO_KEEPALIVE_VALS = None
+
 logger = getLogger('tcp')
 
 
 def register(schemas):
-    schemas['tcp'] = from_uri_tcp
-    schemas['udp'] = from_uri_udp
-    schemas['ssl'] = from_uri_ssl
+    schemas.update({
+        'tcp': from_uri_tcp,
+        'udp': from_uri_udp,
+        'ssl': from_uri_ssl
+    })
 
 
 class TcpSocket(AbstractSocket):
     DEFAULT_TIMEOUT = 30
+    SUPPORTED_PROXIES = ('SOCKS5', 'HTTP')
 
 
 def from_uri_tcp(uri, *args, **kwargs):
@@ -56,7 +76,7 @@ def _connect_direct(uri, required_socktype, timeout):
     count = len(propositions)
 
     for idx, (family, socktype, proto, _, addr) in enumerate(propositions):
-        sock = socket.socket(family, socktype, proto)
+        sock = socket(family, socktype, proto)
         sock.settimeout(timeout)
 
         try:
@@ -110,9 +130,6 @@ def _connect_proxies(proxies, uri, required_socktype, timeout):
 
 
 def from_uri_any(required_socktype, uri, *args, **kwargs):
-    if uri.shema.lower() != 'tcp':
-        raise ValueError('Invalid schema')
-
     proxies = kwargs.get('proxies', None)
     timeout = kwargs.get('timeout', TcpSocket.DEFAULT_TIMEOUT)
 
@@ -121,16 +138,15 @@ def from_uri_any(required_socktype, uri, *args, **kwargs):
     else:
         sock = _connect_direct(uri, required_socktype, timeout)
 
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+    sock.setsockopt(SOL_SOCKET, SO_KEEPALIVE, 1)
 
-    if all(hasattr(socket, attr) for attr in (
-            'TCP_KEEPIDLE', 'TCP_KEEPINTVL', 'TCP_KEEPCNT')):
-        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 1 * 60)
-        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 5 * 60)
-        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 10)
+    if all((TCP_KEEPIDLE, TCP_KEEPINTVL, TCP_KEEPCNT)):
+        sock.setsockopt(IPPROTO_TCP, TCP_KEEPIDLE, 1 * 60)
+        sock.setsockopt(IPPROTO_TCP, TCP_KEEPINTVL, 5 * 60)
+        sock.setsockopt(IPPROTO_TCP, TCP_KEEPCNT, 10)
 
-    elif hasattr(socket, 'SIO_KEEPALIVE_VALS') and hasattr(sock, 'ioctl'):
-        sock.ioctl(socket.SIO_KEEPALIVE_VALS, (1, 1*60*1000, 5*60*1000))
+    elif SIO_KEEPALIVE_VALS and hasattr(sock, 'ioctl'):
+        sock.ioctl(SIO_KEEPALIVE_VALS, (1, 1*60*1000, 5*60*1000))
 
     if kwargs.get('nonblocking', False):
         sock.setblocking(0)
@@ -141,7 +157,8 @@ def from_uri_any(required_socktype, uri, *args, **kwargs):
 def wrap_ssl(sock, uri, *args, **kwargs):
     ssl_auth = kwargs.get('ssl_auth', True)
     ssl_protocol = kwargs.get('ssl_protocol', PROTOCOL_TLS)
-    ssl_ciphers = kwargs.get('ssl_ciphers', 'HIGH:!aNULL:!MD5:!RC4:!3DES:!DES')
+    ssl_ciphers = kwargs.get(
+        'ssl_ciphers', 'HIGH:!aNULL:!MD5:!RC4:!3DES:!DES')
 
     hostname = kwargs.get('hostname', uri.hostname)
 

@@ -10,7 +10,7 @@ __all__ = ('Obfs3Client', 'Obfs3Server')
 import random
 
 from . import obfs3_dh
-from ...base import BaseTransport
+from ...base import PubyBaseTransport
 from ..cryptoutils import (
     NewAESCipher, AES_MODE_CTR,
     get_random, hmac_sha256_digest
@@ -31,7 +31,7 @@ ST_WAIT_FOR_HANDSHAKE = 1 # Waiting for the DH handshake
 ST_SEARCHING_MAGIC = 2 # Waiting for magic strings from the other party
 ST_OPEN = 3 # Sending application data.
 
-class Obfs3Transport(BaseTransport):
+class Obfs3Transport(PupyBaseTransport):
     """
     Obfs3Transport implements the obfs3 protocol.
     """
@@ -81,7 +81,7 @@ class Obfs3Transport(BaseTransport):
         self.recv_magic_const = None
         self.we_are_initiator = None
 
-    def circuitConnected(self):
+    def on_connect(self):
         """
         Do the obfs3 handshake:
         PUBKEY | WR(PADLEN)
@@ -100,7 +100,7 @@ class Obfs3Transport(BaseTransport):
 
         self.downstream.write(handshake_message)
 
-    def receivedUpstream(self, data):
+    def upstream_recv(self, data):
         """
         Got data from upstream. We need to obfuscated and proxy them downstream.
         """
@@ -115,7 +115,7 @@ class Obfs3Transport(BaseTransport):
             return
 
         if __debug__:
-            logger.debug("obfs3 receivedUpstream: Transmitting %d bytes.", len(data))
+            logger.debug("obfs3 upstream_recv: Transmitting %d bytes.", len(data))
 
         if self.queued_data:
             if __debug__:
@@ -126,7 +126,7 @@ class Obfs3Transport(BaseTransport):
         # Proxy encrypted message.
         data.write_to(self.downstream, modificator=self.send_crypto.encrypt)
 
-    def receivedDownstream(self, data):
+    def downstream_recv(self, data):
         """
         Got data from downstream. We need to de-obfuscate them and
         proxy them upstream.

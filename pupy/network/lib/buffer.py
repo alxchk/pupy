@@ -24,7 +24,7 @@ class Buffer(object):
 
     __slots__ = (
         '_data', '_len', '_bofft',
-        'on_write_f', 'data_lock', 'waiting', 'transport', 'cookie',
+        'on_write_f', 'data_lock', 'waiting', 'transport',
         'chunk_size', 'compressor'
     )
 
@@ -44,7 +44,6 @@ class Buffer(object):
         self.data_lock = Lock()
         self.waiting = Event() if shared else None
         self.transport = transport_func
-        self.cookie = None
         self.chunk_size = None
         self.compressor = None
         if compressed:

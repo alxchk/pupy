@@ -18,9 +18,11 @@ class TransportSetupFailed(Exception):
 
 class BasePupyTransport(object):
     __slots__ = (
-        'downstream', 'upstream', 'stream',
-        'cookie', 'closed'
+        'downstream', 'upstream', 'stream', 'closed'
     )
+
+    name = '?'
+    credentials = []
 
     def __init__(self, stream, **kwargs):
         if stream is None:
@@ -32,7 +34,6 @@ class BasePupyTransport(object):
             self.upstream = stream.upstream
             self.stream = stream
 
-        self.cookie = None
         self.closed = False
 
     @classmethod
@@ -55,7 +56,7 @@ class BasePupyTransport(object):
         return cls.customize(**kwargs)
 
     def close(self):
-        self.closed=True
+        self.closed = True
         try:
             self.on_close()
         except:
@@ -73,40 +74,25 @@ class BasePupyTransport(object):
         """
             We just established a connection. Handshake time ! :-)
         """
-        if hasattr(self, 'circuitConnected'):
-            """ obfsproxy style alias """
-            return self.circuitConnected()
+        pass
 
     def on_close(self):
         """
             called when the connection has been closed
         """
-        if hasattr(self, 'circuitDestroyed'):
-            """ obfsproxy style alias """
-            return self.circuitDestroyed()
+        pass
 
     def downstream_recv(self, data):
         """
             receiving obfuscated data from the remote client and writing deobfuscated data to downstream
         """
-        if hasattr(self, 'receivedDownstream'):
-            """ obfsproxy style alias """
-            return self.receivedDownstream(data)
         raise NotImplementedError()
 
     def upstream_recv(self, data):
         """
             receiving clear-text data from local rpyc Stream and writing obfuscated data to upstream
         """
-        if hasattr(self, 'receivedUpstream'):
-            return self.receivedUpstream(data)
-            """ obfsproxy style alias """
         raise NotImplementedError()
-
-
-class BaseTransport(BasePupyTransport):
-    """ obfsproxy style alias """
-    __slots__ = ()
 
 
 class TransportError(Exception):
@@ -119,7 +105,7 @@ class PluggableTransportError(Exception):
 
 class TransportWrapper(BasePupyTransport):
 
-    __slots__ = ('cls_chain', 'chain')
+    __slots__ = ('chain',)
 
     cls_chain = ()
 
@@ -208,10 +194,15 @@ class TransportWrapper(BasePupyTransport):
 
 def chain_transports(*args):
     """ chain 2 or more transports in such a way that the first argument is the transport seen at network level like t1(t2(t3(...(raw_data)...)))"""
-    if len(args)<2:
-        raise ValueError("chain_transports needs at least 2 transports !")
+    if not args:
+        raise ValueError('Nothing to chain')
+
+    elif len(args) == 1:
+        return args[0]
 
     class WrappedTransport(TransportWrapper):
+        __slots__ = ()
+
         cls_chain = list(args)
 
     return WrappedTransport
