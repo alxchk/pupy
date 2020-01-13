@@ -2,10 +2,11 @@
 
 __all__ = (
     'AbstractNonThreadSafeEndpoint', 'AbstractEndpoint',
-    'EndpointCapabilities'
+    'EndpointCapabilities', 'AbstractServer'
 )
 
-from threading import Lock
+from threading import Thread, Lock
+
 from network.lib.streams.PupyGenericStream import PupyGenericStream
 
 
@@ -19,7 +20,7 @@ class EndpointCapabilities(object):
     def __init__(self,
         max_io_chunk=None, native_proxies=(), supported_proxies=(),
             default_stream=PupyGenericStream):
-        
+
         self.max_io_chunk = max_io_chunk
         self.supported_proxies = supported_proxies
         self.native_proxies = native_proxies
@@ -118,11 +119,62 @@ class AbstractNonThreadSafeEndpoint(AbstractEndpoint):
             self._handle, self._name, self.__class__.__name__)
 
 
-class AbstractServer(object):
+class AbstractServerInitWatchdog(Thread):
+    def __init__(self):
+        pass
+
+
+class RPCLoop(Thread):
+    __slots__ = (
+        'connection', 'on_verified', 'on_exit', 'pupy_srv'
+    )
+
+    def __init__(self, connection, pupy_srv=None, on_verified=None, on_exit=None):
+        self.connection = connection
+
+        self.pupy_srv = pupy_srv
+        self.on_verified = on_verified
+        self.on_exit = on_exit
+
+        super(RPCLoop, self).__init__()
+
+        self.daemon = True
+        self.name = 'RPCLoop({})'.format(self.connection)
+
+    def run(self):
+        try:
+            self.connection.init()
+            self.connection.loop()
+        finally:
+            try:
+                if self.on_exit:
+                    self.on_exit(self)
+            except Exception:
+                pass
+
+
+class AbstractConnectionMaker(object):
+    __slots__ = (
+        'transport', 'stream'
+    )
+
+    def __init__(self, transport, stream):
+        self.transport = transport
+        self.stream = stream
+
+    def __call__(self, endpoint, kwargs):
+        # Connection = Endpoint + transports + stream
+
+        return self.stream(
+            endpoint, transport, kwargs
+        )
+
+
+class AbstractServer(Thread):
     __slots__ = (
         'pupy_srv',
         'transport_class', 'transport_kwargs',
-        'active'
+        'active', '_handlers_lock'
     )
 
     def __init__(self, pupy_srv, transport_class, transport_kwargs):
@@ -131,22 +183,45 @@ class AbstractServer(object):
         self.transport_kwargs = transport_kwargs
         self.active = False
 
+        self._handlers_lock = Lock()
+
+        super(AbstractServer, self).__init__()
+        self.daemon = True
+
     def listen(self):
         pass
 
-    def start(self):
+    def run(self):
         self.active = True
 
         try:
             while self.active:
-                self._impl_loop()
+                endpoint = self._imp_accept()
+                if endpoint:
+                    RPCLoop(
+                        endpoint,
+                        pupy_srv=self.pupy_srv,
+                        on_verified=self._impl_on_verified_locked,
+                        on_exit=self._impl_on_exit_locked
+                    ).start()
         finally:
             self._impl_on_exit()
 
-    def _impl_loop(self):
+    def _imp_accept(self):
+        raise NotImplementedError('{}._imp_access() not implemented')
+
+    def _impl_on_verified_locked(self, connection):
+        with self._handlers_lock:
+            self._impl_on_verified(connection)
+
+    def _impl_on_exit_locked(self, connection):
+        with self._handlers_lock:
+            self._impl_on_exitconnection)
+
+    def _impl_on_verified(self, connection):
         pass
 
-    def _impl_on_exit(self):
+    def _impl_on_exit(self, connection):
         pass
 
     def close(self):
