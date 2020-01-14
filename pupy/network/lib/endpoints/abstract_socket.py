@@ -1,12 +1,14 @@
 # -*- coding: utf-8 -*-
 
 from socket import SHUT_RDWR
+from socket import AF_UNSPEC, SOCK_STREAM
 from socket import error as socket_error
 from socket import timeout as socket_timeout
 from select import select
 from errno import EINTR
 
-from .abstract import AbstractEndpoint
+from .abstract import AbstractEndpoint, AbstractServer
+
 from .. import getLogger
 
 
@@ -111,3 +113,69 @@ class AbstractSocket(AbstractEndpoint):
         return 'Fd({}{})'.format(
             self._fileno, '' if self._handle else ' (closed)'
         )
+
+
+class AbstractSocketAddress(object):
+    __slots__ = (
+        'address', 'family', 'socktype'
+    )
+
+    def __init__(self, address, family=AF_UNSPEC, socktype=SOCK_STREAM):
+        self.address = address
+        self.family = family
+        self.socktype = socktype
+    
+    def __repr__(self):
+        return '{}({})'.format(
+            self.__class__.__name__, ', '.join(
+                '{}={}'.format(
+                    slot, getattr(self, slot) for slot in self.__slots__
+                )
+            )
+        )
+
+
+class AbstractSocketServer(AbstractServer):
+    __slots__ = (
+        'addresses', '_listeners'
+    )
+
+    def __init__(self, addresses, service,
+        transport_class, transport_kwargs={}, external=None,
+            igd=None):
+
+        super(AbstractSocketServer, self).__init__(
+            service, transport_class, transport_kwargs
+        )
+
+        self.addresses = addresses
+        self._listeners = []
+
+    def _impl_make_sockets(self):
+        for address in self.addresses:
+
+
+    def _impl_listen(self):
+        pass
+
+    def _impl_accept(self):
+        pass
+
+    def _impl_on_verified(self, connection):
+        pass
+
+    def _impl_on_exit(self, connection):
+        pass
+
+    def _impl_close(self):
+        while True:
+            try:
+                listener = self._listeners.pop()
+                try:
+                    listener.close()
+                except OSError:
+                    pass
+
+            except IndexError:
+                break
+

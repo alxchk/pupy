@@ -6,8 +6,11 @@ __all__ = (
 )
 
 from threading import Thread, Lock
-
+from network.lib import getLogger
 from network.lib.streams.PupyGenericStream import PupyGenericStream
+
+
+logger = getLogger('abstract')
 
 
 class EndpointCapabilities(object):
@@ -155,18 +158,24 @@ class RPCLoop(Thread):
 
 class AbstractConnectionMaker(object):
     __slots__ = (
-        'transport', 'stream'
+        'transport', 'kwargs', 'stream'
     )
 
-    def __init__(self, transport, stream):
+    def __init__(self, transport, stream, kwargs={}):
         self.transport = transport
         self.stream = stream
+        self.kwargs = kwargs
 
-    def __call__(self, endpoint, kwargs):
+    def __call__(self, endpoint, kwargs=None):
         # Connection = Endpoint + transports + stream
 
+        if kwargs:
+            kwargs = dict(self.kwargs).update(kwargs)
+        else:
+            kwargs = self.kwargs
+
         return self.stream(
-            endpoint, transport, kwargs
+            endpoint, self.transport, kwargs
         )
 
 
@@ -174,41 +183,102 @@ class AbstractServer(Thread):
     __slots__ = (
         'pupy_srv',
         'transport_class', 'transport_kwargs',
-        'active', '_handlers_lock'
+        'active',
+
+        'ping', 'ping_interval', 'ping_timeout',
+        
+        '_handlers_lock', '_connection_maker',
+        '_initialized'
     )
 
-    def __init__(self, pupy_srv, transport_class, transport_kwargs):
+    connection_maker = AbstractConnectionMaker
+
+    def __init__(self,
+            pupy_srv, transport_class, transport_kwargs={}):
+
         self.pupy_srv = pupy_srv
         self.transport_class = transport_class
         self.transport_kwargs = transport_kwargs
         self.active = False
 
+        self._initialized = False
         self._handlers_lock = Lock()
+        self._connection_maker = self.connection_maker(
+            transport_class, transport_kwargs
+        )
+
+        if self.pupy_srv and self.pupy_srv.config:
+            ping = self.pupy_srv.config.get('pupyd', 'ping')
+            self.ping = ping and ping not in (
+                '0', '-1', 'N', 'n', 'false', 'False', 'no', 'No'
+            )
+        else:
+            self.ping = False
+
+        if self.ping:
+            try:
+                self.ping_interval = int(ping)
+            except:
+                self.ping_interval = 2
+
+            if self.pupy_srv:
+                self.ping_timeout = self.pupy_srv.config.get(
+                    'pupyd', 'ping_interval')
+            else:
+                self.ping_timeout = self.ping_interval * 10
+        else:
+            self.ping_interval = None
+            self.ping_timeout = None
 
         super(AbstractServer, self).__init__()
         self.daemon = True
 
     def listen(self):
-        pass
+        if self._initialized:
+            return
+
+        try:
+            self._impl_listen()
+            self._initialized = True
+        except Exception as e:
+            logger.exception(
+                '%s.listen(): %s', self.__class__.__name__, e)
+            raise
 
     def run(self):
         self.active = True
 
         try:
             while self.active:
-                endpoint = self._imp_accept()
+                endpoint, kwargs = self._impl_accept()
+                stream = self._connection_maker(endpoint, kwargs)
+
                 if endpoint:
-                    RPCLoop(
-                        endpoint,
+                    detached_rpc_handler = RPCLoop(
+                        stream,
                         pupy_srv=self.pupy_srv,
                         on_verified=self._impl_on_verified_locked,
                         on_exit=self._impl_on_exit_locked
-                    ).start()
-        finally:
-            self._impl_on_exit()
+                    )
 
-    def _imp_accept(self):
-        raise NotImplementedError('{}._imp_access() not implemented')
+                    detached_rpc_handler.start()
+        finally:
+            try:
+                self._impl_close()
+            except Exception as e:
+                logger.exception('%s._impl_close(): %s', 
+                    self.__class__.__name__, e)
+                raise
+
+    def _impl_listen(self):
+        raise NotImplementedError(
+            '{}._impl_listen() must be implemented'
+        )
+
+    def _impl_accept(self):
+        raise NotImplementedError(
+            '{}._impl_access() -> (endpoint, kwargs) must be implemented'
+        )
 
     def _impl_on_verified_locked(self, connection):
         with self._handlers_lock:
@@ -216,7 +286,7 @@ class AbstractServer(Thread):
 
     def _impl_on_exit_locked(self, connection):
         with self._handlers_lock:
-            self._impl_on_exitconnection)
+            self._impl_on_exit(connection)
 
     def _impl_on_verified(self, connection):
         pass
@@ -224,5 +294,9 @@ class AbstractServer(Thread):
     def _impl_on_exit(self, connection):
         pass
 
+    def _impl_close(self):
+        pass
+
     def close(self):
-        self.active = False
+        if not self.active:
+            return
