@@ -5,7 +5,7 @@ __all__ = ('register',)
 from os import write, close, unlink
 
 from socket import (
-    socket, getaddrinfo,
+    socket, getaddrinfo, gaierror,
     AF_INET, AF_UNSPEC,
     SOCK_DGRAM, SOCK_STREAM,
     IPPROTO_TCP
@@ -19,7 +19,9 @@ from ssl import (
 from socket import error as socket_error
 from tempfile import mkstemp
 
-from .abstract_socket import AbstractSocket
+from .abstract_socket import (
+    AbstractSocket, AbstractSocketServer
+)
 
 from network.lib import getLogger
 
@@ -55,6 +57,79 @@ class TcpSocket(AbstractSocket):
     SUPPORTED_PROXIES = ('SOCKS5', 'HTTP')
 
 
+class InetSocketServer(AbstractSocketServer):
+    DEFAULT_PORT = 443
+
+    __slots__ = (
+        'family', 'sockproto'
+    )
+
+    def __init__(
+        self, uris, pupy_srv, transport_class, transport_kwargs={},
+            family=AF_UNSPEC, sockproto=SOCK_STREAM):
+
+        super(InetSocketServer, self).__init__(
+            uris, pupy_srv, transport_class,
+                transport_kwargs=transport_kwargs)
+
+        self.family = family
+        self.sockproto = sockproto
+
+    def _impl_resolve(self, uris):
+        pairs = []
+        results = []
+
+        for uri in uris:
+            port = uri.port or self.DEFAULT_PORT
+            if not uri.hostname:
+                for any_addr in ('0.0.0.0', '::'):
+                    pairs.append((any_addr, port, True))
+            else:
+                pairs.append((uri.hostname, port, False))
+
+        for host, port, may_fail in pairs:
+            try:
+                propositions = getaddrinfo(
+                    host, port, self.family, self.sockproto
+                )
+
+                for family, socktype, proto, _, addr in propositions:
+                    results.append((family, socktype, proto, addr))
+
+            except gaierror as e:
+                logger.info(
+                    '%s: Failed to resolve %s:%s: %s', self, host, port, addr, e
+                )
+
+                if not may_fail:
+                    raise
+
+        return results
+
+    def _impl_bind(self, addresses):
+        sockets = []
+
+        try:
+            for family, socktype, proto, addr in enumerate(addresses):
+                sock = socket(family, socktype, proto)
+                sock.bind(addr)
+
+                sockets.append(sock)
+        except Exception as e:
+            logger.error('%s: Failed to bind %s: %s', self, addr, e)
+
+            for sock in sockets:
+                sock.close()
+
+            raise
+
+        self._sockets = sockets
+
+
+class TcpSocketServer(AbstractSocketServer):
+    pass
+
+
 def from_uri_tcp(uri, *args, **kwargs):
     return from_uri_any(SOCK_STREAM, uri, *args, **kwargs)
 
@@ -66,67 +141,6 @@ def from_uri_udp(uri, *args, **kwargs):
 def from_uri_ssl(uri, *args, **kwargs):
     sock = from_uri_tcp(uri, *args, **kwargs)
     return wrap_ssl(sock, uri, *args, **kwargs)
-
-
-def _connect_direct(uri, required_socktype, timeout):
-    sock = None
-    propositions = getaddrinfo(
-        uri.hostname, uri.port, AF_UNSPEC, required_socktype
-    )
-    count = len(propositions)
-
-    for idx, (family, socktype, proto, _, addr) in enumerate(propositions):
-        sock = socket(family, socktype, proto)
-        sock.settimeout(timeout)
-
-        try:
-            sock.connect(addr)
-        except socket_error:
-            if idx + 1 == count:
-                raise
-
-
-def _connect_proxies(proxies, uri, required_socktype, timeout):
-    sock = socket(AF_INET, required_socktype)
-
-    host = uri.hostname
-    port = int(uri.port or 443)
-
-    logger.debug(
-        'Connect to: %s:%d timeout=%d via proxies',
-        host, port, timeout)
-
-    for proxy in proxies:
-        proxy_addr = proxy.addr
-        proxy_port = None
-
-        if ':' in proxy_addr:
-            proxy_addr, proxy_port = proxy_addr.rsplit(':', 1)
-            proxy_port = int(proxy_port)
-
-        logger.debug(
-            'Connect via %s:%s (type=%s%s)',
-            proxy_addr, proxy_port or 'default', proxy.type,
-            ' auth={}:{}'.format(
-                proxy.username, proxy.password
-            ) if proxy.username else '')
-
-        sock.add_proxy(
-            proxy_type=proxy.type,
-            addr=proxy_addr,
-            port=proxy_port,
-            rdns=True,
-            username=proxy.username,
-            password=proxy.password
-        )
-
-    sock.settimeout(timeout)
-    sock.connect((host, port))
-
-    logger.debug(
-        'Connected to: %s:%d: %s', host, port, sock)
-
-    return sock
 
 
 def from_uri_any(required_socktype, uri, *args, **kwargs):
@@ -230,3 +244,68 @@ def wrap_ssl(sock, uri, *args, **kwargs):
         raise ValueError('Invalid peer role: {}'.format(peer_role))
 
     return wrapped_socket
+
+
+def _connect_direct(uri, required_socktype, timeout):
+    sock = None
+    propositions = getaddrinfo(
+        uri.hostname, uri.port, AF_UNSPEC, required_socktype
+    )
+    count = len(propositions)
+
+    for idx, (family, socktype, proto, _, addr) in enumerate(propositions):
+        sock = socket(family, socktype, proto)
+        sock.settimeout(timeout)
+
+        try:
+            sock.connect(addr)
+        except socket_error:
+            if idx + 1 == count:
+                raise
+
+
+def _connect_proxies(proxies, uri, required_socktype, timeout):
+    sock = socket(AF_INET, required_socktype)
+
+    host = uri.hostname
+    port = int(uri.port or 443)
+
+    logger.debug(
+        'Connect to: %s:%d timeout=%d via proxies',
+        host, port, timeout)
+
+    for proxy in proxies:
+        proxy_addr = proxy.addr
+        proxy_port = None
+
+        if ':' in proxy_addr:
+            proxy_addr, proxy_port = proxy_addr.rsplit(':', 1)
+            proxy_port = int(proxy_port)
+
+        logger.debug(
+            'Connect via %s:%s (type=%s%s)',
+            proxy_addr, proxy_port or 'default', proxy.type,
+            ' auth={}:{}'.format(
+                proxy.username, proxy.password
+            ) if proxy.username else '')
+
+        sock.add_proxy(
+            proxy_type=proxy.type,
+            addr=proxy_addr,
+            port=proxy_port,
+            rdns=True,
+            username=proxy.username,
+            password=proxy.password
+        )
+
+    sock.settimeout(timeout)
+    sock.connect((host, port))
+
+    logger.debug(
+        'Connected to: %s:%d: %s', host, port, sock)
+
+    return sock
+
+
+def _bind(uri, *args, **kwargs):
+    pupy_srv = kwargs.get('pupy_srv')

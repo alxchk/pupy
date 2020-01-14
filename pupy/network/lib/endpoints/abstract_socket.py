@@ -124,58 +124,58 @@ class AbstractSocketAddress(object):
         self.address = address
         self.family = family
         self.socktype = socktype
-    
+
     def __repr__(self):
         return '{}({})'.format(
             self.__class__.__name__, ', '.join(
                 '{}={}'.format(
-                    slot, getattr(self, slot) for slot in self.__slots__
-                )
+                    slot, getattr(self, slot)
+                ) for slot in self.__slots__
             )
         )
 
 
 class AbstractSocketServer(AbstractServer):
+    POLL_TIMEOUT = 1000
+    MAX_QUEUED_CONNECTIONS = 32
+
     __slots__ = (
-        'addresses', '_listeners'
+        '_sockets',
     )
 
-    def __init__(self, addresses, service,
-        transport_class, transport_kwargs={}, external=None,
-            igd=None):
-
+    def __init__(self, uris, pupy_srv, transport_class, transport_kwargs={}):
         super(AbstractSocketServer, self).__init__(
-            service, transport_class, transport_kwargs
-        )
+            uris, pupy_srv, transport_class,
+                transport_kwargs=transport_kwargs)
 
-        self.addresses = addresses
-        self._listeners = []
-
-    def _impl_make_sockets(self):
-        for address in self.addresses:
-
+        self._sockets = []
 
     def _impl_listen(self):
-        pass
+        for socket in self._sockets:
+            socket.listen(self.MAX_QUEUED_CONNECTIONS)
 
     def _impl_accept(self):
-        pass
+        ready, _, failed = select(
+            self._sockets, [], self._sockets, self.POLL_TIMEOUT)
 
-    def _impl_on_verified(self, connection):
-        pass
+        for socket in failed:
+            if socket in self._sockets:
+                self._sockets.remove(socket)
+                logger.error('%s._imp_accept():socket=%s failed', self, socket)
 
-    def _impl_on_exit(self, connection):
-        pass
+        if not self._sockets:
+            raise EOFError('No open sockets')
+
+        return tuple(socket.accept() for socket in ready if socket not in failed)
 
     def _impl_close(self):
         while True:
             try:
-                listener = self._listeners.pop()
+                socket = self._sockets.pop()
                 try:
-                    listener.close()
+                    socket.close()
                 except OSError:
                     pass
 
             except IndexError:
                 break
-

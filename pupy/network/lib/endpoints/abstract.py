@@ -5,6 +5,8 @@ __all__ = (
     'EndpointCapabilities', 'AbstractServer'
 )
 
+from shlex import split
+from urlparse import urlparse, ParseResult
 from threading import Thread, Lock
 from network.lib import getLogger
 from network.lib.streams.PupyGenericStream import PupyGenericStream
@@ -179,22 +181,40 @@ class AbstractConnectionMaker(object):
         )
 
 
+class AbstractClientException(Exception):
+    __slots__ = ('clients', )
+
+
 class AbstractServer(Thread):
     __slots__ = (
+        'uris',
         'pupy_srv',
         'transport_class', 'transport_kwargs',
+
         'active',
 
         'ping', 'ping_interval', 'ping_timeout',
-        
+
         '_handlers_lock', '_connection_maker',
-        '_initialized'
+        '_initialized',
+        '_clients'
     )
 
     connection_maker = AbstractConnectionMaker
 
-    def __init__(self,
+    def __init__(self, uris,
             pupy_srv, transport_class, transport_kwargs={}):
+
+        if isinstance(uris, str):
+            uris = tuple(urlparse(uri) for uri in split(uris)
+        elif isinstance(uris, ParseResult):
+            uris = (uris,)
+        elif hasattr(uris, '__next__'):
+            uris = tuple(uris)
+        else:
+            raise ValueError('Invalid argument "uris" - must be uri or tuple')
+
+        self.uris = uris
 
         self.pupy_srv = pupy_srv
         self.transport_class = transport_class
@@ -203,6 +223,7 @@ class AbstractServer(Thread):
 
         self._initialized = False
         self._handlers_lock = Lock()
+        self._clients = set()
         self._connection_maker = self.connection_maker(
             transport_class, transport_kwargs
         )
@@ -238,14 +259,34 @@ class AbstractServer(Thread):
             return
 
         try:
+            resolved = tuple(
+                self._impl_resolve(uri) for uri in self.uris
+            )
+        except Exception as e:
+            logger.exception(
+                '%s.listen():_impl_resolve: %s', self.__class__.__name__, e)
+            raise
+
+        try:
+            self._impl_bind(resolved)
+        except Exception as e:
+            logger.exception(
+                '%s.listen():_impl_bind: %s', self.__class__.__name__, e)
+            raise
+
+        try:
             self._impl_listen()
             self._initialized = True
         except Exception as e:
             logger.exception(
-                '%s.listen(): %s', self.__class__.__name__, e)
+                '%s.listen():_impl_listen: %s', self.__class__.__name__, e)
             raise
 
     def run(self):
+        if not self._initialized:
+            raise ValueError('{}.listen() must be called first'.format(
+                self.__class__.__name__))
+
         self.active = True
 
         try:
@@ -262,17 +303,28 @@ class AbstractServer(Thread):
                     )
 
                     detached_rpc_handler.start()
+
+        except Exception as e:
+            logger.exception('%s._impl_accept: error: %s', self, e)
+            raise
+
         finally:
             try:
                 self._impl_close()
             except Exception as e:
-                logger.exception('%s._impl_close(): %s', 
+                logger.exception('%s._impl_close(): %s',
                     self.__class__.__name__, e)
                 raise
 
+    def _impl_resolve(self, uri):
+        return uri
+
     def _impl_listen(self):
+        pass
+
+    def _impl_bind(self, uris):
         raise NotImplementedError(
-            '{}._impl_listen() must be implemented'
+            '{}._impl_bind(uris) must be implemented'
         )
 
     def _impl_accept(self):
@@ -283,10 +335,14 @@ class AbstractServer(Thread):
     def _impl_on_verified_locked(self, connection):
         with self._handlers_lock:
             self._impl_on_verified(connection)
+            self._clients.add(connection)
 
     def _impl_on_exit_locked(self, connection):
         with self._handlers_lock:
-            self._impl_on_exit(connection)
+            try:
+                self._clients.remove(connection)
+            finally:
+                self._impl_on_exit(connection)
 
     def _impl_on_verified(self, connection):
         pass
