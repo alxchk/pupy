@@ -45,10 +45,10 @@ class ConnectLauncher(BaseNetworkLauncher):
     def init_argparse(cls):
         cls.arg_parser = LauncherArgumentParser(prog="connect", description=cls.__doc__)
 
-        target = cls.arg_parser.add_mutually_exclusive_group()
+        target = cls.arg_parser.add_mutually_exclusive_group(required=True)
         target.add_argument(
             '-u', '--uri', metavar='<transport+cipher[+cipher..]://[creds]@host:port>[/args?..]',
-            required=True, action='append',
+            action='append',
             help='Universal URI of endpoint to connect'
         )
 

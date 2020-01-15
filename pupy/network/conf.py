@@ -92,7 +92,10 @@ def load_network_endpoints():
     for _, module_name, _ in iter_modules(endpoints_lib.__path__):
         try:
             module = import_module(__name__ + '.' + module_name)
-        except ImportError:
+        except ImportError as e:
+            logging.exception(
+                'Import failed for %s.%s: %s',
+                __name__, module_name, e)
             continue
 
         if hasattr(module, 'register'):
@@ -103,18 +106,28 @@ def load_transports():
     for _, module_name, _ in iter_modules(endpoints_lib.__path__):
         try:
             module = import_module(__name__ + '.' + module_name)
-        except ImportError:
+        except ImportError as e:
+            logging.exception(
+                'Import failed for %s.%s: %s',
+                __name__, module_name, e)
             continue
 
         if hasattr(module, 'register'):
+            logging.debug('Register module %s', module_name)
             module.register(transports_ng)
 
 
 def load_network_modules():
+    logging.debug("Load legacy configurations ..")
     load_legacy_configurations()
 
+    logging.debug("Load network endpoints ..")
     load_network_endpoints()
+
+    logging.debug("Load transports ..")
     load_transports()
+
+    logging.debug("Load launchers ..")
     load_launchers()
 
 
@@ -153,32 +166,40 @@ def transports_conf_from_uri(uri, bind=False):
     return transport
 
 
-def from_uri(uri, bind=False, args=[], kwargs={}):
+def from_uri(uri, bind=False, args=[], kwargs={}, credentials={}):
     if not isinstance(uri, ParseResult):
         uri = urlparse(uri)
 
     # At endpoint level we are interested only at first level
     # tcp+obfs3+rsa:// -> tcp://
 
-    endpoint = None
+    entity = None
     transport = None
 
+    required_credentials = []
+
     if '+' in uri.scheme:
-        transport, credentials = transports_conf_from_uri(
+        transport, required_credentials = transports_conf_from_uri(
             uri, bind)
 
         parts = uri.scheme.split('+')
-        schema = parts[0]
-        uri = ParseResult(schema, uri[1:])
+        scheme = parts[0]
+        uri = ParseResult(scheme, uri[1:])
+    
+    credential_data = {
+        credential:credentials[credential]
+        for credential in required_credentials
+    }
 
-    ep_configuration = endpoints.get(uri.schema.lower())
+    ep_configuration = endpoints.get(uri.scheme.lower())
     if not ep_configuration:
-        raise ValueError('Unregistered schema {}'.format(
-            repr(uri.schema.lower())))
+        raise ValueError('Unregistered scheme {}'.format(
+            repr(uri.scheme.lower())))
     
     client_ep, server_ep = ep_configuration
     ep_handler = server_ep if bind else client_ep
 
-    endpoint = ep_handler(args, kwargs)
+    entity = ep_handler(credential_data, args, kwargs)
+    entity.set_transport(transport)
 
-    return endpoint, transport
+    return entity

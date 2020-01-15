@@ -11,7 +11,7 @@ from socket import socket
 
 from . import from_uri
 
-from .abstract import AbstractEndpoint
+from .abstract import AbstractEndpoint, EndpointCapabilities
 from .abstract_socket import AbstractSocket
 
 
@@ -19,7 +19,7 @@ class KCPEndpoint(AbstractEndpoint):
 
     __slots__ = (
         '_fileno', '_sock', '_connid',
-        '_new_sent', '_initialized'
+        '_new_sent', '_initialized', '_write_only'
     )
 
     KCP_ID = 0
@@ -30,17 +30,20 @@ class KCPEndpoint(AbstractEndpoint):
 
     UDP_HEADER_SIZE = 24 + 5
 
-    def __init__(self, handle, interval=64):
+    def __init__(self, handle, interval=64, write_only=False, kcp_id=None):
+        self._write_only = write_only
+
         if isinstance(handle, AbstractSocket):
             self._handle = handle.handle
             self._fileno = handle.name
         elif isinstance(handle, tuple) and len(handle) == 3:
             self._sock, _, handle = handle
+            self._write_only = True
         elif isinstance(handle, socket):
             self._sock = handle
             handle = KCP(
                 handle.fileno(),
-                KCPEndpoint.KCP_ID,
+                KCPEndpoint.KCP_ID if kcp_id is None else kcp_id,
                 interval=interval
             )
         else:
@@ -57,7 +60,9 @@ class KCPEndpoint(AbstractEndpoint):
         super(KCPEndpoint, self).__init__(
             handle,
             self._fileno,
-            max_io_chunk=handle.mtu - KCPEndpoint.UDP_HEADER_SIZE
+            EndpointCapabilities(
+                max_io_chunk=handle.mtu - KCPEndpoint.UDP_HEADER_SIZE
+            )
         )
 
     @property
@@ -109,6 +114,9 @@ class KCPEndpoint(AbstractEndpoint):
         return len(data)
 
     def _read_impl(self, timeout):
+        if self._write_only:
+            raise ValueError('Write-Only KCP Instance')
+
         buf = self._handle.recv()
         if buf is None:
             if timeout is not None:
@@ -138,5 +146,5 @@ def from_uri_kcp(uri, *args, **kwargs):
     )
 
 
-def register(schemas):
-    schemas['kcp'] = from_uri_kcp
+# def register(schemas):
+#     schemas['kcp'] = from_uri_kcp

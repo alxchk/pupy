@@ -10,12 +10,12 @@ __all__ = ('Obfs3Client', 'Obfs3Server')
 import random
 
 from . import obfs3_dh
-from ...base import PubyBaseTransport
 from ..cryptoutils import (
     NewAESCipher, AES_MODE_CTR,
     get_random, hmac_sha256_digest
 )
 
+from network.lib.base import BasePupyTransport
 from network.lib.buffer import Buffer
 from network.lib import getLogger
 logger = getLogger('obfs3')
@@ -31,7 +31,7 @@ ST_WAIT_FOR_HANDSHAKE = 1 # Waiting for the DH handshake
 ST_SEARCHING_MAGIC = 2 # Waiting for magic strings from the other party
 ST_OPEN = 3 # Sending application data.
 
-class Obfs3Transport(PupyBaseTransport):
+class Obfs3Transport(BasePupyTransport):
     """
     Obfs3Transport implements the obfs3 protocol.
     """

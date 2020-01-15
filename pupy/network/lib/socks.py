@@ -296,8 +296,11 @@ class _BaseSocket(socket.socket):
 
     _savenames = list()
 
+
 def _makemethod(name):
     return lambda self, *pos, **kw: self._savedmethods[name](*pos, **kw)
+
+
 for name in ("sendto", "send", "recvfrom", "recv"):
     method = getattr(_BaseSocket, name, None)
 

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-__all__ = ('register',)
+# __all__ = ('register',)
 
 import sys
 
@@ -8,12 +8,6 @@ from socket import (
     socket, AF_UNIX, SOCK_STREAM
 )
 from .abstract_socket import AbstractSocket
-
-
-def register(schemas):
-    if sys.platform != 'win32':
-        schemas['unix'] = from_uri
-        schemas['pipe'] = from_uri
 
 
 class UnixSocket(AbstractSocket):
@@ -28,3 +22,9 @@ def from_uri(schemas, uri, *args, **kwargs):
     sock.connect(uri.path)
 
     return AbstractSocket(sock)
+
+
+# def register(schemas):
+#     if sys.platform != 'win32':
+#         schemas['unix'] = from_uri
+#         schemas['pipe'] = from_uri

@@ -20,16 +20,22 @@ class PupyGenericStream(object):
     compress = True
 
     __slots__ = (
-        '_ep',
+        '_ep', '_close_cb',
         'upstream', 'downstream',
         'upstream_lock', 'downstream_lock',
         'transport', 'transport_class', 'transport_kwargs',
         'buf_in', 'buf_out',
-        'closed', 'failed'
+        'closed', 'failed', 'is_client'
     )
 
-    def __init__(self, endpoint, transport_class, transport_kwargs={}):
+    def __init__(self,
+            endpoint, transport_class, transport_kwargs={},
+            is_client=True, close_cb=None):
+
         self._ep = endpoint
+
+        self.is_client = is_client
+        self._close_cb = close_cb
 
         self.closed = False
         self.failed = False
@@ -198,6 +204,9 @@ class PupyGenericStream(object):
 
         self.closed = True
         self.upstream.wake()
+
+        if self._close_cb:
+            self._close_cb(self)
 
     def __repr__(self):
         return 'PupyGenericStream({})'.format(self._ep)

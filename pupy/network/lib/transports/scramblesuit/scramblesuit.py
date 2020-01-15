@@ -32,7 +32,7 @@ class ReadPassFile(argparse.Action):
         with open(values) as f:
             setattr(namespace, self.dest, f.readline().strip())
 
-class ScrambleSuitTransport(base.PupyBaseTransport):
+class ScrambleSuitTransport(base.BasePupyTransport):
 
     """
     Implement the ScrambleSuit protocol.

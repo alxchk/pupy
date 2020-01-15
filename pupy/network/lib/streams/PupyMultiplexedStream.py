@@ -1,34 +1,37 @@
 # -*- coding: utf-8 -*-
 
+from time import time
+
 class PupyMultiplexedStream(object):
 
     MAX_IO_CHUNK = 32768
-    LONG_SLEEP_INTERRUPT_TIMEOUT = 5
-    KEEP_ALIVE_REQUIRED = LONG_SLEEP_INTERRUPT_TIMEOUT * 3
 
     SESSION_START = '\x00'
     SESSION_DATA = '\x01'
     SESSION_END = '\x02'
 
     __slots__ = (
-        'initialized', 'session_start_sent'
+        'initialized', 'session_start_sent',
+        'is_client', 'closed',
+        'local_connid', 'remote_connid',
+        'lsi', 'keep_alive'
     )
 
-    def __init__(self, sock, transport_class, transport_kwargs={}, client_side=True, close_cb=None, lsi=5):
+    def __init__(self, sock, transport_class, transport_kwargs={}, is_client=True, close_cb=None, lsi=5):
 
         if not (type(sock) is tuple and len(sock) in (2,3)):
             raise Exception(
                 'dst_addr is not supplied for UDP stream, '
                 'PupyUDPSocketStream needs a reply address/port')
 
-        self.client_side = client_side
+        self.is_client = is_client
         self.closed = False
 
         self.local_connid = os.urandom(4)
         self.remote_connid = None
 
-        self.LONG_SLEEP_INTERRUPT_TIMEOUT = lsi
-        self.KEEP_ALIVE_REQUIRED = lsi * 3
+        self.lsi = lsi
+        self.keep_alive = lsi * 3
         self.initialized = False
         self.session_start_sent = False
 
@@ -36,7 +39,7 @@ class PupyMultiplexedStream(object):
         if len(sock) == 3:
             self.kcp = sock[2]
         else:
-            if client_side:
+            if is_client:
                 dst = self.sock.fileno()
             else:
                 # dst = lambda data: self.sock.sendto(data, self.dst_addr)
@@ -111,7 +114,7 @@ class PupyMultiplexedStream(object):
         self.closed = True
         self.kcp = None
 
-        if self.client_side:
+        if self.is_client:
             self.sock.close()
 
     def _send(self):
@@ -150,7 +153,7 @@ class PupyMultiplexedStream(object):
         return buf
 
     def _poll_read(self, timeout=None):
-        if not self.client_side:
+        if not self.is_client:
             # In case of strage hangups change None to timeout
             self._wake_after = time.time() + timeout
             return self.buf_in.wait(None)
@@ -247,8 +250,8 @@ class PupyMultiplexedStream(object):
         return True
 
     def wake(self):
-        now = time.time()
+        now = time()
         if not self._wake_after or (now >= self._wake_after):
             with self.downstream_lock:
                 self.buf_in.wake()
-            self._wake_after = now + self.LONG_SLEEP_INTERRUPT_TIMEOUT
+            self._wake_after = now + self.keep_alive

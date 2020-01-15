@@ -7,7 +7,9 @@ from socket import timeout as socket_timeout
 from select import select
 from errno import EINTR
 
-from .abstract import AbstractEndpoint, AbstractServer
+from .abstract import (
+    AbstractEndpoint, AbstractServer, EndpointCapabilities
+)
 
 from .. import getLogger
 
@@ -16,13 +18,12 @@ logger = getLogger('epsocket')
 
 
 class AbstractSocket(AbstractEndpoint):
-    MAX_IO_CHUNK = 65536
-
     __slots__ = (
         '_fileno',
     )
 
-    def __init__(self, handle):
+    def __init__(self, handle, capabilities=EndpointCapabilities(
+            max_io_chunk=65535)):
         self._fileno = handle.fileno()
         super(AbstractSocket, self).__init__(
             handle, handle.getpeername()
@@ -33,6 +34,8 @@ class AbstractSocket(AbstractEndpoint):
         to_close = None
         data = None
 
+        portion = self.capabilities.max_io_chunk or 65535
+
         while True:
             try:
                 to_read, _, to_close = select(
@@ -40,7 +43,7 @@ class AbstractSocket(AbstractEndpoint):
                 )
 
                 if to_read:
-                    data = self._handle.recv(self.MAX_IO_CHUNK)
+                    data = self._handle.recv(portion)
                     if not data:
                         data = None
                         to_close = 'stream closed'
@@ -71,6 +74,15 @@ class AbstractSocket(AbstractEndpoint):
     def _write_impl(self, data):
         sent = 0
         to_close = False
+
+        max_io_chunk = self.capabilities.max_io_chunk
+        ldata = len(data)
+
+        if max_io_chunk and ldata > max_io_chunk:
+            raise ValueError(
+                '{}._write_impl(data): data is too big: {} > {}', self,
+                ldata, max_io_chunk
+            )   
 
         while True:
             try:
@@ -115,26 +127,6 @@ class AbstractSocket(AbstractEndpoint):
         )
 
 
-class AbstractSocketAddress(object):
-    __slots__ = (
-        'address', 'family', 'socktype'
-    )
-
-    def __init__(self, address, family=AF_UNSPEC, socktype=SOCK_STREAM):
-        self.address = address
-        self.family = family
-        self.socktype = socktype
-
-    def __repr__(self):
-        return '{}({})'.format(
-            self.__class__.__name__, ', '.join(
-                '{}={}'.format(
-                    slot, getattr(self, slot)
-                ) for slot in self.__slots__
-            )
-        )
-
-
 class AbstractSocketServer(AbstractServer):
     POLL_TIMEOUT = 1000
     MAX_QUEUED_CONNECTIONS = 32
@@ -143,30 +135,38 @@ class AbstractSocketServer(AbstractServer):
         '_sockets',
     )
 
-    def __init__(self, uris, pupy_srv, transport_class, transport_kwargs={}):
-        super(AbstractSocketServer, self).__init__(
-            uris, pupy_srv, transport_class,
-                transport_kwargs=transport_kwargs)
+    def __init__(self, uris, pupy_srv=None,
+            capabilities=EndpointCapabilities(max_io_chunk=65535)):
+        super(AbstractSocketServer, self).__init__(uris, pupy_srv)
+        self._sockets = {}
 
-        self._sockets = []
+    def _listener_uri_by_serversock(self, sock):
+        uri = self._sockets.get(sock, None)
+        if not uri:
+            raise IndexError('Socket {} is not registered'.format(sock))
+
+        return uri
 
     def _impl_listen(self):
         for socket in self._sockets:
             socket.listen(self.MAX_QUEUED_CONNECTIONS)
 
     def _impl_accept(self):
+        sockets = list(self._sockets)
         ready, _, failed = select(
-            self._sockets, [], self._sockets, self.POLL_TIMEOUT)
+            sockets, [], sockets, self.POLL_TIMEOUT)
 
         for socket in failed:
             if socket in self._sockets:
-                self._sockets.remove(socket)
+                del self._sockets[socket]
                 logger.error('%s._imp_accept():socket=%s failed', self, socket)
 
         if not self._sockets:
             raise EOFError('No open sockets')
 
-        return tuple(socket.accept() for socket in ready if socket not in failed)
+        return tuple(
+            (socket.accept(), socket) for socket in ready if socket not in failed
+        )
 
     def _impl_close(self):
         while True:

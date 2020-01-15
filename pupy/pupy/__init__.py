@@ -33,7 +33,7 @@ __all__ = (
     'EXTS_SOURCES', 'EXTS_COMPILED', 'EXTS_NATIVE', 'EXTS_ALL',
     'Blackhole', 'DummyPackageLoader', 'PupyPackageLoader',
 
-    'config', 'modules', 'dlls', 'client', 'revision',
+    'config', 'modules', 'dlls', 'client', 'revision', 'credentials',
 
     'namespace', 'connection', 'set_broadcast_event', 'broadcast_event',
     'obtain',
@@ -65,6 +65,7 @@ os_ = None
 for module in ('nt', 'posix'):
     if module in sys.builtin_module_names:
         os_ = __import__(module)
+        break
 
 
 def _stub(*args, **kwargs):
@@ -79,6 +80,7 @@ def is_supported(function):
 
 client = None
 config = {}
+credentials = {}
 
 try:
     import _pupy
@@ -806,12 +808,17 @@ def load_memimporter_fallback():
 
 
 def setup_credentials(config):
+    global credentials
+
     if 'credentials' not in config:
         return
 
-    credentials = make_module('pupy_credentials')
-    for cred, value in config.pop('credentials').iteritems():
-        setattr(credentials, cred, value)
+    credentials = config.pop('credentials')
+
+    # TODO: Remove
+    pupy_credentials = make_module('pupy_credentials')
+    for cred, value in credentials.iteritems():
+        setattr(pupy_credentials, cred, value)
 
 
 def setup_manager():
