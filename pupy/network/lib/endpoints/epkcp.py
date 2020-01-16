@@ -9,7 +9,7 @@ from os import urandom
 
 from socket import socket
 
-from . import from_uri
+from network.conf import from_uri
 
 from .abstract import AbstractEndpoint, EndpointCapabilities
 from .abstract_socket import AbstractSocket

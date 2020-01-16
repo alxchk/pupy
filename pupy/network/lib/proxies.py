@@ -4,6 +4,7 @@ __all__ = (
     'get_proxies', 'find_default_proxy',
     'get_proxy_for_address', 'set_proxy_unavailable',
     'has_wpad', 'parse_proxy', 'find_proxies',
+    'find_proxies_for_hostinfo', 'ProxyHints',
     'find_proxies_for_transport', 'ProxyInfo',
     'connect_client_with_proxy_info',
     'CHECK_CONNECTIVITY_URL'
@@ -67,6 +68,16 @@ ProxyInfo = namedtuple(
         'client', 'client_args', 'transport_args',
         'host', 'port', 'chain'
     ])
+
+ProxyHints = namedtuple(
+    'ProxyHints', [
+        'native_implementation',
+        'lan_proxies', 'wan_proxies',
+        'auto_proxies',
+        'use_wpad', 'try_direct'
+    ]
+)
+
 
 
 try:
@@ -744,3 +755,82 @@ def connect_client_with_proxy_info(transport_info, proxy_info):
     )
 
     return stream
+
+
+def find_proxies_for_hostinfo(host_info, proxy_hints=None):
+    host, port, _ = host_info
+    wpad_uri = None
+
+    parsed_wan_proxies = list(
+        _parse_proxies(proxy_hints.wan_proxies) if proxy_hints else []
+    )
+
+    dups = set()
+    auto = proxy_hints.auto_proxies if proxy_hints else True
+    wpad = True
+
+    if proxy_hints:
+        wpad = proxy_hints.use_wpad or (
+            proxy_hints.use_wpad is None and proxy_hints.auto_proxies)
+
+    if auto:
+        if wpad:
+            uri_host = host
+            if ':' in host:
+                uri_host = '[' + host + ']'
+
+            wpad_uri = 'tcp://{}:{}'.format(uri_host, port)
+            if proxy_hints and proxy_hints.native_implementation and \
+                    proxy_hints.native_implementation.lower() == 'http':
+                wpad_uri = 'http://{}{}'.format(
+                    uri_host, ':{}'.format(port) if port != 80 else '')
+
+        for lan_proxy in find_proxies(wpad_uri):
+            chain = []
+            if lan_proxy in dups:
+                continue
+
+            dups.add(lan_proxy)
+
+            if lan_proxy.type != 'DIRECT':
+                chain.append(lan_proxy)
+
+            chain.extend(parsed_wan_proxies)
+
+            if not is_proxiable(chain, transport_info):
+                logger.debug('Rejected proposition %s - unsupported transport', chain)
+                continue
+
+            yield make_args_for_transport_info(
+                transport_info, host_info, chain)
+
+    for lan_proxy in _parse_proxies(lan_proxies):
+        if lan_proxy in dups:
+            continue
+
+        if _check_proxy_info(lan_proxy):
+            global LAST_PROXY, LAST_PROXY_TIME
+
+            LAST_PROXY = lan_proxy
+            LAST_PROXY_TIME = time.time()
+
+        dups.add(lan_proxy)
+
+        chain = [lan_proxy]
+        chain.extend(parsed_wan_proxies)
+
+        if not is_proxiable(chain, transport_info):
+            logger.debug('Rejected proposition %s - unsupported transport', chain)
+            continue
+
+        yield make_args_for_transport_info(
+            transport_info, host_info, chain)
+
+    if direct:
+        if parsed_wan_proxies:
+            yield make_args_for_transport_info(
+                transport_info, host_info, parsed_wan_proxies)
+        else:
+            # Just return same info
+            yield make_args_for_transport_info(
+                transport_info, host_info, [])

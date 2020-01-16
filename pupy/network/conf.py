@@ -17,6 +17,7 @@ from pkgutil import iter_modules
 from importlib import import_module
 
 from network import transports as transports_conf
+from network.lib import getLogger
 from network.lib import endpoints as endpoints_lib
 from network.lib import transports as transports_lib
 
@@ -29,17 +30,20 @@ endpoints = {}
 transports_ng = {}
 
 
+logger = getLogger('conf')
+
+
 def add_transport(module_name):
     try:
         confmodule = import_module(
             'network.transports.{}.conf'.format(module_name))
 
         if not confmodule:
-            logging.warning('Import failed: %s', module_name)
+            logger.warning('Import failed: %s', module_name)
             return
 
         if not hasattr(confmodule, 'TransportConf'):
-            logging.warning('TransportConf is not present in %s', module_name)
+            logger.warning('TransportConf is not present in %s', module_name)
             return
 
         t = confmodule.TransportConf
@@ -47,10 +51,9 @@ def add_transport(module_name):
             t.name = module_name
 
         transports[t.name] = t
-        logging.debug('Transport loaded: %s', t.name)
 
     except Exception, e:
-        logging.exception('Transport disabled: %s: %s', module_name, e)
+        logger.exception('Transport disabled: %s: %s', module_name, e)
 
 
 def load_launchers():
@@ -58,19 +61,19 @@ def load_launchers():
         from .lib.launchers.connect import ConnectLauncher
         launchers['connect'] = ConnectLauncher
     except Exception, e:
-        logging.exception('%s: ConnectLauncher disabled', e)
+        logger.exception('%s: ConnectLauncher disabled', e)
 
     try:
         from .lib.launchers.auto_proxy import AutoProxyLauncher
         launchers['auto_proxy'] = AutoProxyLauncher
     except Exception, e:
-        logging.exception('%s: AutoProxyLauncher disabled', e)
+        logger.exception('%s: AutoProxyLauncher disabled', e)
 
     try:
         from .lib.launchers.bind import BindLauncher
         launchers['bind'] = BindLauncher
     except Exception, e:
-        logging.exception('%s: BindLauncher disabled', e)
+        logger.exception('%s: BindLauncher disabled', e)
 
     try:
         from .lib.launchers.dnscnc import DNSCncLauncher
@@ -79,7 +82,7 @@ def load_launchers():
         })
 
     except Exception as e:
-        logging.exception('%s: DNSCncLauncher disabled', e)
+        logger.exception('%s: DNSCncLauncher disabled', e)
         DNSCncLauncher = None
 
 
@@ -91,9 +94,9 @@ def load_legacy_configurations():
 def load_network_endpoints():
     for _, module_name, _ in iter_modules(endpoints_lib.__path__):
         try:
-            module = import_module(__name__ + '.' + module_name)
+            module = import_module('network.lib.endpoints.' + module_name)
         except ImportError as e:
-            logging.exception(
+            logger.exception(
                 'Import failed for %s.%s: %s',
                 __name__, module_name, e)
             continue
@@ -103,35 +106,39 @@ def load_network_endpoints():
 
 
 def load_transports():
-    for _, module_name, _ in iter_modules(endpoints_lib.__path__):
+    for _, module_name, _ in iter_modules(transports_lib.__path__):
         try:
-            module = import_module(__name__ + '.' + module_name)
+            module = import_module('network.lib.transports.' + module_name)
         except ImportError as e:
-            logging.exception(
+            logger.exception(
                 'Import failed for %s.%s: %s',
                 __name__, module_name, e)
             continue
 
         if hasattr(module, 'register'):
-            logging.debug('Register module %s', module_name)
+            logger.debug('Register module %s', module_name)
             module.register(transports_ng)
 
 
 def load_network_modules():
-    logging.debug("Load legacy configurations ..")
+    logger.debug("Load legacy configurations ..")
     load_legacy_configurations()
+    logger.debug("Supported legacy transports: %s", list(transports))
 
-    logging.debug("Load network endpoints ..")
+    logger.debug("Load network endpoints ..")
     load_network_endpoints()
+    logger.debug("Supported network endpoints: %s", list(endpoints))
 
-    logging.debug("Load transports ..")
+    logger.debug("Load transports ..")
     load_transports()
+    logger.debug("Supported transports: %s", list(transports_ng))
 
-    logging.debug("Load launchers ..")
+    logger.debug("Load launchers ..")
     load_launchers()
+    logger.debug("Supported launchers: %s", list(launchers))
 
 
-def transports_conf_from_uri(uri, bind=False):
+def transport_conf_from_uri(uri, bind=False):
     if '+' not in uri.scheme:
         return None, []
     
@@ -163,7 +170,7 @@ def transports_conf_from_uri(uri, bind=False):
     else:
         transport = transports[0]
 
-    return transport
+    return transport, chained_credentials
 
 
 def from_uri(uri, bind=False, args=[], kwargs={}, credentials={}):
@@ -179,12 +186,12 @@ def from_uri(uri, bind=False, args=[], kwargs={}, credentials={}):
     required_credentials = []
 
     if '+' in uri.scheme:
-        transport, required_credentials = transports_conf_from_uri(
+        transport, required_credentials = transport_conf_from_uri(
             uri, bind)
 
         parts = uri.scheme.split('+')
         scheme = parts[0]
-        uri = ParseResult(scheme, uri[1:])
+        uri = ParseResult(scheme, *uri[1:])
     
     credential_data = {
         credential:credentials[credential]
@@ -199,7 +206,12 @@ def from_uri(uri, bind=False, args=[], kwargs={}, credentials={}):
     client_ep, server_ep = ep_configuration
     ep_handler = server_ep if bind else client_ep
 
-    entity = ep_handler(credential_data, args, kwargs)
+    logger.debug('Using handler %s for URI=%s', ep_handler, uri)
+
+    entity = ep_handler(credential_data, uri, *args, **kwargs)
+    if not entity:
+        raise ValueError('Failed to construct entity by URI')
+
     entity.set_transport(transport)
 
     return entity

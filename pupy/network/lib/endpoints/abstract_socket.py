@@ -26,7 +26,7 @@ class AbstractSocket(AbstractEndpoint):
             max_io_chunk=65535)):
         self._fileno = handle.fileno()
         super(AbstractSocket, self).__init__(
-            handle, handle.getpeername()
+            handle, handle.getpeername(), capabilities
         )
 
     def _read_impl(self, timeout):

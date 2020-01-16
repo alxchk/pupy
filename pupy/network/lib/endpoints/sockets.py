@@ -200,7 +200,14 @@ def endpoint_from_uri_tls(credentials, uri, *args, **kwargs):
 
 def endpoint_from_uri_any(required_socktype, uri, *args, **kwargs):
 
-    proxies = kwargs.get('proxies', None)
+    logger.debug(
+        'endpoint_from_uri_any(%s, %s, %s, %s)',
+        required_socktype, uri, args, kwargs
+    )
+
+    lan_proxies = kwargs.get('lan_proxies', None)
+    wan_proxies = kwargs.get('wan_proxies', None)
+
     timeout = kwargs.get('timeout', TcpSocket.DEFAULT_TIMEOUT)
     rdns = kwargs.get('rdns', True)
 
@@ -301,6 +308,10 @@ def wrap_tls(credentials, server_side, sock, uri, *args, **kwargs):
 
 
 def _connect_direct(uri, required_socktype, timeout):
+    logger.debug(
+        'Connect direct to %s (socktype=%d)', uri, required_socktype
+    )
+
     sock = None
     propositions = getaddrinfo(
         uri.hostname, uri.port, AF_UNSPEC, required_socktype
