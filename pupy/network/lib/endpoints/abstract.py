@@ -61,18 +61,21 @@ class EndpointCapabilities(object):
 
 class AbstractFabric(object):
     __slots__ = (
-        'transport', 'stream', 'kwargs', 'capabilities'
+        'uri',
+        'transport', 'transport_kwargs',
+        'stream', 'capabilities'
     )
 
-    def __init__(self, kwargs={},
-            capabilities=EndpointCapabilities()):
+    def __init__(self, uri, capabilities=None, kwargs={}):
+        self.uri = uri
         self.transport = None
-        self.kwargs = kwargs
-        self.capabilities = capabilities
+        self.transport_kwargs = {}
+        self.capabilities = capabilities or EndpointCapabilities()
         self.stream = capabilities.default_stream if capabilities else None
 
-    def set_transport(self, transport):
+    def set_transport(self, transport, kwargs):
         self.transport = transport
+        self.transport_kwargs = kwargs
 
     def set_stream(self, stream):
         self.stream = stream
@@ -85,31 +88,59 @@ class AbstractFabric(object):
 
 
 class AbstractEndpoint(AbstractFabric):
+    __slots__ = (
+        '_handle', '_name', '_closed', '_once'
+    )
 
-    __slots__ = ('_handle', '_name')
+    def __init__(self, uri, capabilities=None, handle=None, name=None):
 
-    def __init__(self, handle, name, capabilities, **kwargs):
         self._handle = handle
         self._name = name
+        self._closed = False
+        self._once = Lock()
 
-        super(AbstractEndpoint, self).__init__(capabilities)
+        super(AbstractEndpoint, self).__init__(uri, capabilities)
 
     @property
     def handle(self):
         return self._handle
 
     @property
+    def closed(self):
+        return self._closed
+
+    @property
     def name(self):
         return self._name
 
-    def __call__(self):
-        if self.stream is None:
-            raise ValueError('{}.set_stream(stream) should be called first')
+    def prepare(self, *args, **kwargs):
+        if self._handle:
+            return
+
+        self._closed = False
+
+        self._handle, self._name = self._create_handle_impl(
+            *args, **kwargs
+        )
+
+    def __call__(self, is_client=True, close_cb=None):
+        if self._closed:
+            raise ValueError('{} already closed')
+        elif self.stream is None:
+            raise ValueError('{}.set_stream(stream) must be called first')
+        elif self._handle is None:
+            raise ValueError('{}.prepare() must be called first')
 
         return self.stream(
-            self, self.transport, self.kwargs,
-            is_client=True
+            self, self.transport, self.transport_kwargs,
+            is_client=is_client,
+            close_cb=close_cb
         )
+
+    def _create_handle_impl(self, *args, **kwargs):
+        raise NotImplementedError(
+            '{}._create_handle_impl() -> (handle, name) not implemented'.format(
+                self.__class__.__name__))
 
     def _write_impl(self, data):
         raise NotImplementedError('{}._write_impl not implemented'.format(
@@ -124,19 +155,29 @@ class AbstractEndpoint(AbstractFabric):
             self.__class__.__name__))
 
     def write(self, data):
-        if self._handle is None:
+        if self._closed:
             raise EOFError('{} already closed'.format(self))
+        elif self._handle is None:
+            raise EOFError('{} is not initialized'.format(self))
 
         return self._write_impl(data)
 
     def read(self, timeout):
-        if self._handle is None:
+        if self._closed:
             raise EOFError('{} already closed'.format(self))
+        elif self._handle is None:
+            raise EOFError('{} is not initialized'.format(self))
 
         return self._read_impl(timeout)
 
     def close(self):
-        if self._handle is not None:
+        if not self._closed:
+            with self._once:
+                if self._closed:
+                    return
+
+                self._closed = True
+
             try:
                 return self._close_impl()
             finally:
@@ -229,18 +270,6 @@ class AbstractServer(AbstractFabric):
     def __init__(self, uris,
             pupy_srv=None, capabilities=EndpointCapabilities()):
 
-        if isinstance(uris, str):
-            uris = tuple(urlparse(uri) for uri in split(uris))
-        elif isinstance(uris, ParseResult):
-            uris = (uris,)
-        elif hasattr(uris, '__next__'):
-            uris = tuple(uris)
-        else:
-            raise ValueError(
-                'Invalid argument "uris" - must be uri or tuple'
-            )
-
-        self.uris = uris
         self.pupy_srv = pupy_srv
 
         self.active = False
@@ -272,11 +301,28 @@ class AbstractServer(AbstractFabric):
             self.ping_interval = None
             self.ping_timeout = None
 
-        super(AbstractServer, self).__init__(capabilities)
+        if uris:
+            self._set_uris(uris)
+
+        super(AbstractServer, self).__init__(
+            self._split_uri(uri), capabilities
+        )
+
+    def _split_uri(self, uri):
+        if isinstance(uri, str):
+            return tuple(urlparse(uri) for uri in split(uri))
+        elif isinstance(uri, ParseResult):
+            return (uri,)
+        elif hasattr(uri, '__next__'):
+            return tuple(uri)
+        else:
+            raise ValueError(
+                'Invalid argument "uri" - must be uri or tuple'
+            )
 
     def set_transport(self, transport, kwargs={}):
         self.transport = transport
-        self.kwargs = kwargs
+        self.transport_kwargs = kwargs
 
     def set_stream(self, stream):
         raise NotImplementedError(
@@ -285,13 +331,13 @@ class AbstractServer(AbstractFabric):
             )
         )
 
-    def prepare(self):
+    def prepare(self, *args, **kwargs):
         if self._initialized:
             return
 
         try:
             resolved = tuple(
-                self._impl_resolve(uri) for uri in self.uris
+                self._impl_resolve(uri) for uri in self.uri
             )
         except Exception as e:
             logger.exception(
@@ -323,7 +369,7 @@ class AbstractServer(AbstractFabric):
                 self.__class__.__name__))
 
         thread = Thread(
-            target=self._loop, name='<Listener: uri={}>'.format(self.uris))
+            target=self._loop, name='<Listener: uri={}>'.format(self.uri))
         thread.daemon = True
         thread.start()
 
@@ -333,16 +379,19 @@ class AbstractServer(AbstractFabric):
         try:
             while self.active:
                 endpoints = self._impl_accept()
-                
+
+                endpoints.set_stream(self.stream)
+                endpoints.set_transport(
+                    self.transport, self.transport_kwargs
+                )
+
                 for endpoint in endpoints:
-                    stream = self.stream(
-                        endpoint, self.transport,
-                        self.kwargs,
+                    stream = endpoint(
                         is_client=False,
                         close_cb=self._impl_on_close_locked
                     )
 
-                    if endpoint:
+                    if stream:
                         detached_rpc_handler = RPCLoop(
                             stream,
                             pupy_srv=self.pupy_srv,

@@ -24,10 +24,11 @@ from urlparse import urlparse, ParseResult
 from netaddr import IPAddress, AddrFormatError
 
 from .abstract_socket import (
-    AbstractSocket, AbstractSocketServer
+    AbstractSocket, AbstractSocketServer, EndpointCapabilities
 )
 
 from network.lib import getLogger
+from network.lib.proxies import ProxyHints
 from network.lib.socks import socksocket, ProxyError
 
 from socket import SOL_SOCKET, SO_KEEPALIVE
@@ -57,9 +58,39 @@ def register(schemas):
     })
 
 
-class TcpSocket(AbstractSocket):
-    DEFAULT_TIMEOUT = 30
-    SUPPORTED_PROXIES = ('SOCKS5', 'HTTP')
+class InetSocketClient(AbstractSocket):
+    __slots__ = (
+        'proxy_hints', 'family', 'socktype', 'proto'
+    )
+
+    def __init__(
+        self, uri, family, socktype, proto,
+            capabilities=EndpointCapabilities(
+                max_io_chunk=65535 if socktype == SOCK_STREAM else 1280
+            ), handle=None, name=None, proxy_hints=True):
+
+        self.proxy_hints = proxy_hints
+
+        super(TcpSocket, self).__init__(
+            uri, capabilities, handle, name, proxy_hints
+        )
+
+    def _create_handle_impl(self, *args, **kwargs):
+        proxy_hints = kwargs.get('proxy_hints', None)
+
+        if proxy_hints is None:
+            proxy_hints = self.proxy_hints
+
+        if proxy_hints:
+            try:
+                return self._create_handle_via_proxy_impl(self.uri, proxy_hints)
+            except EOFError:
+                if proxy_hints is True or proxy_hints.try_direct:
+                    return self._create_handle_direct_impl(self.uri)
+                else:
+                    raise
+        else:
+            return self._create_handle_direct_impl(self.uri)
 
 
 class InetSocketServer(AbstractSocketServer):

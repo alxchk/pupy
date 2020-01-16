@@ -4,7 +4,7 @@ __all__ = (
     'get_proxies', 'find_default_proxy',
     'get_proxy_for_address', 'set_proxy_unavailable',
     'has_wpad', 'parse_proxy', 'find_proxies',
-    'find_proxies_for_hostinfo', 'ProxyHints',
+    'find_proxies_for_uri', 'ProxyHints',
     'find_proxies_for_transport', 'ProxyInfo',
     'connect_client_with_proxy_info',
     'CHECK_CONNECTIVITY_URL'
@@ -16,6 +16,7 @@ import os
 import time
 
 from collections import namedtuple
+from urlparse import ParseResult
 
 from . import getLogger
 from . import Proxy
@@ -74,10 +75,9 @@ ProxyHints = namedtuple(
         'native_implementation',
         'lan_proxies', 'wan_proxies',
         'auto_proxies',
-        'use_wpad', 'try_direct'
+        'use_wpad'
     ]
 )
-
 
 
 try:
@@ -757,12 +757,15 @@ def connect_client_with_proxy_info(transport_info, proxy_info):
     return stream
 
 
-def find_proxies_for_hostinfo(host_info, proxy_hints=None):
-    host, port, _ = host_info
+def find_proxies_for_uri(uri, proxy_hints=None):
     wpad_uri = None
 
     parsed_wan_proxies = list(
         _parse_proxies(proxy_hints.wan_proxies) if proxy_hints else []
+    )
+
+    parsed_lan_proxies = list(
+        _parse_proxies(proxy_hints.lan_proxies) if proxy_hints else []
     )
 
     dups = set()
@@ -775,15 +778,13 @@ def find_proxies_for_hostinfo(host_info, proxy_hints=None):
 
     if auto:
         if wpad:
-            uri_host = host
-            if ':' in host:
-                uri_host = '[' + host + ']'
-
-            wpad_uri = 'tcp://{}:{}'.format(uri_host, port)
-            if proxy_hints and proxy_hints.native_implementation and \
-                    proxy_hints.native_implementation.lower() == 'http':
-                wpad_uri = 'http://{}{}'.format(
-                    uri_host, ':{}'.format(port) if port != 80 else '')
+            wpad_uri = ParseResult(
+                'https' if uri.scheme.lower() not in (
+                    'http', 'https', 'ftp'
+                ) else uri.scheme,
+                uri.netloc,
+                '', '', '', ''
+            ).geturl()
 
         for lan_proxy in find_proxies(wpad_uri):
             chain = []
@@ -797,14 +798,9 @@ def find_proxies_for_hostinfo(host_info, proxy_hints=None):
 
             chain.extend(parsed_wan_proxies)
 
-            if not is_proxiable(chain, transport_info):
-                logger.debug('Rejected proposition %s - unsupported transport', chain)
-                continue
+            yield chain
 
-            yield make_args_for_transport_info(
-                transport_info, host_info, chain)
-
-    for lan_proxy in _parse_proxies(lan_proxies):
+    for lan_proxy in parsed_lan_proxies:
         if lan_proxy in dups:
             continue
 
@@ -819,18 +815,4 @@ def find_proxies_for_hostinfo(host_info, proxy_hints=None):
         chain = [lan_proxy]
         chain.extend(parsed_wan_proxies)
 
-        if not is_proxiable(chain, transport_info):
-            logger.debug('Rejected proposition %s - unsupported transport', chain)
-            continue
-
-        yield make_args_for_transport_info(
-            transport_info, host_info, chain)
-
-    if direct:
-        if parsed_wan_proxies:
-            yield make_args_for_transport_info(
-                transport_info, host_info, parsed_wan_proxies)
-        else:
-            # Just return same info
-            yield make_args_for_transport_info(
-                transport_info, host_info, [])
+        yield chain

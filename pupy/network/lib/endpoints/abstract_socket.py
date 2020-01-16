@@ -22,11 +22,15 @@ class AbstractSocket(AbstractEndpoint):
         '_fileno',
     )
 
-    def __init__(self, handle, capabilities=EndpointCapabilities(
-            max_io_chunk=65535)):
-        self._fileno = handle.fileno()
+    def __init__(
+        self, uri, capabilities=EndpointCapabilities(max_io_chunk=65535),
+            handle=None, name=None):
+
+        if handle is not None and name is None:
+            name = handle.getpeername()
+
         super(AbstractSocket, self).__init__(
-            handle, handle.getpeername(), capabilities
+            uri, capabilities, handle, name
         )
 
     def _read_impl(self, timeout):

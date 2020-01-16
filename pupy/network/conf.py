@@ -141,7 +141,7 @@ def load_network_modules():
 def transport_conf_from_uri(uri, bind=False):
     if '+' not in uri.scheme:
         return None, []
-    
+
     parts = uri.scheme.split('+')
     required_transports = parts[1:]
 
@@ -165,7 +165,7 @@ def transport_conf_from_uri(uri, bind=False):
             name = '+'.join(required_transports)
             credentials = tuple(chained_credentials)
             cls_chain = transports
-    
+
         transport = ChainedTransports
     else:
         transport = transports[0]
@@ -192,7 +192,7 @@ def from_uri(uri, bind=False, args=[], kwargs={}, credentials={}):
         parts = uri.scheme.split('+')
         scheme = parts[0]
         uri = ParseResult(scheme, *uri[1:])
-    
+
     credential_data = {
         credential:credentials[credential]
         for credential in required_credentials
@@ -202,7 +202,7 @@ def from_uri(uri, bind=False, args=[], kwargs={}, credentials={}):
     if not ep_configuration:
         raise ValueError('Unregistered scheme {}'.format(
             repr(uri.scheme.lower())))
-    
+
     client_ep, server_ep = ep_configuration
     ep_handler = server_ep if bind else client_ep
 
