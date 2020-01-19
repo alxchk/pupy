@@ -8,7 +8,7 @@ from select import select
 from errno import EINTR
 
 from .abstract import (
-    AbstractEndpoint, AbstractServer, EndpointCapabilities
+    AbstractClientEndpoint, AbstractServer, EndpointCapabilities
 )
 
 from .. import getLogger
@@ -17,7 +17,7 @@ from .. import getLogger
 logger = getLogger('epsocket')
 
 
-class AbstractSocket(AbstractEndpoint):
+class AbstractSocket(AbstractClientEndpoint):
     __slots__ = (
         '_fileno',
     )
@@ -25,9 +25,6 @@ class AbstractSocket(AbstractEndpoint):
     def __init__(
         self, uri, capabilities=EndpointCapabilities(max_io_chunk=65535),
             handle=None, name=None):
-
-        if handle is not None and name is None:
-            name = handle.getpeername()
 
         super(AbstractSocket, self).__init__(
             uri, capabilities, handle, name
@@ -124,11 +121,6 @@ class AbstractSocket(AbstractEndpoint):
         except (OSError, socket_error) as e:
             if __debug__:
                 logger.exception('%s - close error - %s', e)
-
-    def __repr__(self):
-        return 'Fd({}{})'.format(
-            self._fileno, '' if self._handle else ' (closed)'
-        )
 
 
 class AbstractSocketServer(AbstractServer):

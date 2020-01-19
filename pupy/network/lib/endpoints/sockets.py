@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 
-__all__ = ('register',)
+__endpoints__ = (
+    'InetSocketClient',  'InetSocketServer'
+)
 
 from os import write, close, unlink
 
@@ -19,16 +21,20 @@ from ssl import (
 from socket import error as socket_error
 from tempfile import NamedTemporaryFile
 
-from urlparse import urlparse, ParseResult
+from urlparse import ParseResult
 
 from netaddr import IPAddress, AddrFormatError
 
+from .abstract import (
+    Keywords, Schemes
+)
+
 from .abstract_socket import (
-    AbstractSocket, AbstractSocketServer, EndpointCapabilities
+    AbstractSocket, AbstractSocketServer, EndpointCapabilities,
 )
 
 from network.lib import getLogger
-from network.lib.proxies import ProxyHints
+from network.lib.proxies import find_proxies_for_uri, ProxyHints
 from network.lib.socks import socksocket, ProxyError
 
 from socket import SOL_SOCKET, SO_KEEPALIVE
@@ -50,29 +56,99 @@ except ImportError:
 logger = getLogger('tcp')
 
 
-def register(schemas):
-    schemas.update({
-        'tcp': (endpoint_from_uri_tcp, server_from_uri_tcp),
-        'udp': (endpoint_from_uri_udp, server_from_uri_udp),
-        'ssl': (endpoint_from_uri_tls, server_from_uri_tls)
-    })
+def _get_address_family(address):
+    family = AF_UNSPEC
+
+    try:
+        ip_address = IPAddress(address)
+        if ip_address.version == 6:
+            family = AF_INET6
+        else:
+            family = AF_INET
+    except AddrFormatError:
+        pass
+
+    return family
+
+
+def _enable_keepalive(sock):
+    sock.setsockopt(SOL_SOCKET, SO_KEEPALIVE, 1)
+
+    if all((TCP_KEEPIDLE, TCP_KEEPINTVL, TCP_KEEPINTVL)):
+        sock.setsockopt(IPPROTO_TCP, TCP_KEEPIDLE, 1 * 60)
+        sock.setsockopt(IPPROTO_TCP, TCP_KEEPINTVL, 5 * 60)
+        sock.setsockopt(IPPROTO_TCP, TCP_KEEPINTVL, 10)
+    elif all((SIO_KEEPALIVE_VALS, hasattr(sock, 'ioctl'))):
+        sock.ioctl(SIO_KEEPALIVE_VALS, (1, 1*60*1000, 5*60*1000))
 
 
 class InetSocketClient(AbstractSocket):
     __slots__ = (
-        'proxy_hints', 'family', 'socktype', 'proto'
+        'proxy_hints', 'family', 'socktype', 'proto', 'timeout'
     )
 
+    SCHEMES = Schemes(
+        ('tcp', 'TCP over IPv4/IPv6 client'),
+        ('udp', 'UDP over IPv4/IPv6 client'),
+    )
+
+    @classmethod
+    def keywords(cls):
+        keywords = Keywords(
+            ('timeout', 'Connection timeout (sec)', int, 10),
+            ('try_proxy', 'Attempt to connect via proxies', bool, True),
+            ('lan_proxies', 'Proxies to pass to the Internet from the LAN', str, None),
+            ('wan_proxies', 'Proxies to pass from the Internet to the pupysh', str, None),
+            ('use_wpad', 'Try to autodetect proxy using WPAD', bool, True),
+            ('auto_proxies', 'Try to autodetect proxies from environment', bool, True),
+            ('try_direct', 'Try to direct connection if proxy failed', bool, True)
+        )
+
+        keywords += super(InetSocketClient, cls).keywords()
+        return keywords
+
     def __init__(
-        self, uri, family, socktype, proto,
-            capabilities=EndpointCapabilities(
-                max_io_chunk=65535 if socktype == SOCK_STREAM else 1280
-            ), handle=None, name=None, proxy_hints=True):
+        self, uri, handle=None, name=None, capabilities=None,
+            timeout=10, try_proxy=True, lan_proxies=None, wan_proxies=None,
+            use_wpad=True, auto_proxies=True, try_direct=True,proxy_native_implementation=[]):
 
-        self.proxy_hints = proxy_hints
+        self.uri = uri
+        self.proxy_hints = None
+        if try_proxy:
+            self.proxy_hints = ProxyHints(
+                proxy_native_implementation, lan_proxies,
+                wan_proxies, auto_proxies, use_wpad, try_direct
+            )
 
-        super(TcpSocket, self).__init__(
-            uri, capabilities, handle, name, proxy_hints
+        self.timeout = timeout
+
+        if not (self.uri.hostname and self.uri.port):
+            raise ValueError('Both host and port must be specified')
+
+        if handle:
+            self.family = handle.family
+            self.socktype = handle.type
+            self.proto = handle.proto
+
+            if name is None:
+                name = handle.getpeername()
+        else:
+            self.family = _get_address_family(uri.hostname)
+
+            if uri.scheme.lower() == 'udp':
+                self.socktype = SOCK_DGRAM
+            else:
+                self.socktype = SOCK_STREAM
+
+            self.proto = 0
+
+        if capabilities is None:
+            capabilities = EndpointCapabilities(
+                max_io_chunk=32768 if self.socktype == SOCK_STREAM else 1200
+            )
+
+        super(InetSocketClient, self).__init__(
+            uri, capabilities, handle, name
         )
 
     def _create_handle_impl(self, *args, **kwargs):
@@ -82,15 +158,103 @@ class InetSocketClient(AbstractSocket):
             proxy_hints = self.proxy_hints
 
         if proxy_hints:
+            if proxy_hints is True:
+                proxy_hints = None
+
             try:
-                return self._create_handle_via_proxy_impl(self.uri, proxy_hints)
+                return self._create_handle_via_proxy_impl(proxy_hints)
             except EOFError:
-                if proxy_hints is True or proxy_hints.try_direct:
-                    return self._create_handle_direct_impl(self.uri)
+                if not proxy_hints or proxy_hints.try_direct:
+                    return self._create_handle_direct_impl()
                 else:
                     raise
         else:
-            return self._create_handle_direct_impl(self.uri)
+            return self._create_handle_direct_impl()
+
+    def _create_handle_via_proxy_impl(self, proxy_hints):
+        for proxies in find_proxies_for_uri(self.uri, proxy_hints):
+            try:
+                return self._create_handle_via_proxy_attempt_impl(proxies)
+            except (ProxyError, socket_error) as e:
+                logger.info(
+                    'Failed to connect via proxies (%s): %s', proxies, e
+                )
+
+        raise EOFError('No connectable proxies found')
+
+    def _resolve_uri(self):
+        propositions = getaddrinfo(
+            self.uri.hostname, self.uri.port, AF_UNSPEC, self.socktype
+        )
+
+        for family, socktype, proto, _, addr in propositions:
+            yield family, socktype, proto, addr
+
+    def _create_handle_via_proxy_attempt_impl(self, proxies):
+
+        sock = socksocket(self.family, self.socktype, self.proto)
+
+        host = self.uri.hostname
+        port = int(self.uri.port or 443)
+
+        logger.debug(
+            'Connect to: %s:%d timeout=%d via proxies',
+            host, port, self.timeout
+        )
+
+        for proxy in proxies:
+            proxy_addr = proxy.addr
+            proxy_port = None
+
+            if ':' in proxy_addr:
+                proxy_addr, proxy_port = proxy_addr.rsplit(':', 1)
+                proxy_port = int(proxy_port)
+
+            logger.debug(
+                'Connect via %s:%s (type=%s%s)',
+                proxy_addr, proxy_port or 'default', proxy.type,
+                ' auth={}:{}'.format(
+                    proxy.username, proxy.password
+                ) if proxy.username else '')
+
+            sock.add_proxy(
+                proxy_type=proxy.type,
+                addr=proxy_addr,
+                port=proxy_port,
+                rdns=True,
+                username=proxy.username,
+                password=proxy.password
+            )
+
+        sock.settimeout(self.timeout)
+        sock.connect((host, port))
+
+        logger.debug(
+            'Connected to: %s:%d: %s', host, port, sock)
+
+        return sock, '{}:{}'.format(host, port)
+
+    def _create_handle_direct_impl(self):
+        propositions = getaddrinfo(
+            self.uri.hostname, self.uri.port, AF_UNSPEC, self.socktype
+        )
+
+        lcnt = len(propositions)
+
+        sock = None
+
+        for idx, (family, socktype, proto, _, addr) in enumerate(propositions):
+            try:
+                sock = socket(family, socktype, proto)
+                sock.connect(addr)
+
+            except socket_error:
+                if idx + 1 == lcnt:
+                    raise
+
+        _enable_keepalive(sock)
+
+        return sock, '{}:{}'.format(*addr)
 
 
 class InetSocketServer(AbstractSocketServer):
@@ -109,11 +273,11 @@ class InetSocketServer(AbstractSocketServer):
         self.family = family
         self.sockproto = sockproto
 
-    def _impl_resolve(self, uris):
+    def _impl_resolve(self):
         pairs = []
         results = []
 
-        for uri in uris:
+        for uri in self.uris:
             port = uri.port or self.DEFAULT_PORT
             if not uri.hostname:
                 for any_addr in ('0.0.0.0', '::'):
@@ -173,7 +337,7 @@ class TlsSocketServer(InetSocketServer):
         self, credentials, uris, pupy_srv, family=AF_UNSPEC,
             ssl_auth=False, ssl_protocol=None, ssl_ciphers=None,
             hostname=None):
-        
+
         super(TlsSocketServer, self).__init__(uris, pupy_srv, family)
         self.credentials = credentials
         self.ssl_auth = ssl_auth
@@ -208,61 +372,6 @@ class TlsSocketServer(InetSocketServer):
 
 class TcpSocketServer(AbstractSocketServer):
     pass
-
-
-def endpoint_from_uri_tcp(credentials, uri, *args, **kwargs):
-    return endpoint_from_uri_any(
-        SOCK_STREAM, uri, *args, **kwargs
-    )
-
-
-def endpoint_from_uri_udp(credentials, uri, *args, **kwargs):
-    return endpoint_from_uri_any(
-        SOCK_DGRAM, uri, *args, **kwargs
-    )
-
-
-def endpoint_from_uri_tls(credentials, uri, *args, **kwargs):
-    sock = endpoint_from_uri_any(credentials, 
-        uri, *args, **kwargs
-    )
-    return wrap_tls(credentials, False, sock, uri, *args, **kwargs)
-
-
-def endpoint_from_uri_any(required_socktype, uri, *args, **kwargs):
-
-    logger.debug(
-        'endpoint_from_uri_any(%s, %s, %s, %s)',
-        required_socktype, uri, args, kwargs
-    )
-
-    lan_proxies = kwargs.get('lan_proxies', None)
-    wan_proxies = kwargs.get('wan_proxies', None)
-
-    timeout = kwargs.get('timeout', TcpSocket.DEFAULT_TIMEOUT)
-    rdns = kwargs.get('rdns', True)
-
-    if proxies:
-        sock = _connect_proxies(
-            proxies, uri, required_socktype, timeout, rdns
-        )
-    else:
-        sock = _connect_direct(uri, required_socktype, timeout)
-
-    sock.setsockopt(SOL_SOCKET, SO_KEEPALIVE, 1)
-
-    if all((TCP_KEEPIDLE, TCP_KEEPINTVL, TCP_KEEPCNT)):
-        sock.setsockopt(IPPROTO_TCP, TCP_KEEPIDLE, 1 * 60)
-        sock.setsockopt(IPPROTO_TCP, TCP_KEEPINTVL, 5 * 60)
-        sock.setsockopt(IPPROTO_TCP, TCP_KEEPCNT, 10)
-
-    elif SIO_KEEPALIVE_VALS and hasattr(sock, 'ioctl'):
-        sock.ioctl(SIO_KEEPALIVE_VALS, (1, 1*60*1000, 5*60*1000))
-
-    if kwargs.get('nonblocking', False):
-        sock.setblocking(0)
-
-    return AbstractSocket(sock)
 
 
 def wrap_tls(credentials, server_side, sock, uri, *args, **kwargs):
@@ -336,118 +445,6 @@ def wrap_tls(credentials, server_side, sock, uri, *args, **kwargs):
         raise ValueError('Invalid peer role: {}'.format(peer_role))
 
     return wrapped_socket
-
-
-def _connect_direct(uri, required_socktype, timeout):
-    logger.debug(
-        'Connect direct to %s (socktype=%d)', uri, required_socktype
-    )
-
-    sock = None
-    propositions = getaddrinfo(
-        uri.hostname, uri.port, AF_UNSPEC, required_socktype
-    )
-    count = len(propositions)
-
-    for idx, (family, socktype, proto, _, addr) in enumerate(propositions):
-        sock = socket(family, socktype, proto)
-        sock.settimeout(timeout)
-
-        try:
-            sock.connect(addr)
-            return sock
-        except socket_error:
-            if idx + 1 == count:
-                raise
-
-
-def _connect_proxies(proxies, uri, required_socktype, timeout, rdns):
-    if not rdns:
-        try:
-            propositions = getaddrinfo(
-                uri.hostname, uri.port, AF_UNSPEC, required_socktype
-            )
-
-            count = len(propositions)
-
-            for idx, (family, socktype, proto, _, addr) in enumerate(
-                    propositions):
-                
-                resolved_uri = ParseResult(
-                    uri[0], '{}:{}'.format(*addr), *uri[2:]
-                )
-
-                try:
-                    return _connect_proxies_one(
-                        proxies, resolved_uri, family, socktype, proto,
-                        timeout
-                    )
-                except socket_error:
-                    if idx + 1 == count:
-                        raise
-
-        except gaierror:
-            # Fallback to rdns
-            return _connect_proxies(
-                proxies, uri, required_socktype, timeout, True)
-
-    family = AF_INET
-
-    try:
-        ip_address = IPAddress(uri.hostname)
-        if ip_address.version == 6:
-            family = AF_INET6
-    except AddrFormatError:
-        pass        
-
-    return _connect_proxies_one(
-        proxies, uri, family, required_socktype, 0, timeout
-    )
-
-
-def _connect_proxies_one(
-        proxies, uri, family, socktype, proto, timeout):
-
-    sock = socksocket(family, socktype, proto)
-
-    host = uri.hostname
-    port = int(uri.port or 443)
-
-    logger.debug(
-        'Connect to: %s:%d timeout=%d via proxies',
-        host, port, timeout)
-
-    for proxy in proxies:
-        proxy_addr = proxy.addr
-        proxy_port = None
-
-        if ':' in proxy_addr:
-            proxy_addr, proxy_port = proxy_addr.rsplit(':', 1)
-            proxy_port = int(proxy_port)
-
-        logger.debug(
-            'Connect via %s:%s (type=%s%s)',
-            proxy_addr, proxy_port or 'default', proxy.type,
-            ' auth={}:{}'.format(
-                proxy.username, proxy.password
-            ) if proxy.username else '')
-
-        sock.add_proxy(
-            proxy_type=proxy.type,
-            addr=proxy_addr,
-            port=proxy_port,
-            rdns=True,
-            username=proxy.username,
-            password=proxy.password
-        )
-
-    sock.settimeout(timeout)
-    sock.connect((host, port))
-
-    logger.debug(
-        'Connected to: %s:%d: %s', host, port, sock)
-
-    return sock
 
 
 def server_from_uri_tls(credentials, uri, *args, **kwargs):

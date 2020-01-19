@@ -75,7 +75,7 @@ ProxyHints = namedtuple(
         'native_implementation',
         'lan_proxies', 'wan_proxies',
         'auto_proxies',
-        'use_wpad'
+        'use_wpad', 'try_direct'
     ]
 )
 

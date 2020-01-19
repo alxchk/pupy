@@ -1,18 +1,119 @@
 # -*- coding: utf-8 -*-
 
 __all__ = (
-    'AbstractNonThreadSafeEndpoint', 'AbstractEndpoint',
-    'EndpointCapabilities', 'AbstractServer'
+    'AbstractEndpoint', 'AbstractClientEndpoint',
+    'EndpointCapabilities', 'AbstractServer',
+    'Keywords', 'Schemes'
 )
 
 from shlex import split
 from urlparse import urlparse, ParseResult
 from threading import Thread, Lock
+from collections import namedtuple
+
 from network.lib import getLogger
 from network.lib.streams.PupyGenericStream import PupyGenericStream
 
 
 logger = getLogger('abstract')
+
+
+class KeywordDescription(object):
+    __slots__ = (
+        'name', 'description', 'default_value', 'default_type'
+    )
+
+    def __init__(self, name, description, default_type=str, default_value=None):
+        self.name = name
+        self.description = description
+        self.default_value = default_value
+        self.default_type = default_type
+
+    def from_string(self, value):
+        if issubclass(self.default_type, str):
+            return value
+        elif issubclass(self.default_type, int):
+            value = value.lower()
+            if value.startswith('0x'):
+                return int(value[2:], 16)
+            elif value.startswith('0b'):
+                return int(value[2:], 2)
+            elif value.startswith('0o'):
+                return int(value[2:], 8)
+            else:
+                return int(value)
+        elif issubclass(self.default_type, bool):
+            value = value.lower()
+            if value in ('0', '-1', 'n', 'no', 'false', 'off', 'disable'):
+                return False
+            else:
+                return True
+
+
+class Keywords(object):
+    __slots__ = (
+        '_descriptions',
+    )
+
+    def __init__(self, *descriptions):
+        self._descriptions = {}
+
+        for description in descriptions:
+            if isinstance(description, KeywordDescription):
+                self._descriptions[description.name] = description
+            else:
+                description = KeywordDescription(*description)
+                self._descriptions[description.name] = description
+
+    def from_kwargs(self, kwargs):
+        return {
+            description.name:(
+                description.from_string(kwargs[description.name])
+                if description.name in kwargs else
+                description.default_value
+            ) for description in self._descriptions.values()
+        }
+
+    def descriptions(self):
+        return {
+            description.name: description.help
+            for description in self._descriptions
+        }
+
+    def __iadd__(self, keywords):
+        if not isinstance(keywords, Keywords):
+            raise ValueError('Unsupported value')
+
+        for key, value in keywords._descriptions.iteritems():
+            if key not in self._descriptions:
+                self._descriptions[key] = value
+
+        return self
+
+
+class Schemes(object):
+    __slots__ = (
+        'schemes',
+    )
+
+    def __init__(self, *schemes):
+        self.schemes = {
+            name.lower(): description
+            for (name, description) in schemes
+        }
+
+    def from_parsed_uri(self, uri):
+        if not uri.scheme:
+            raise ValueError('Invalid URI')
+
+        scheme = uri.scheme.lower()
+        if '+' in scheme:
+            scheme = scheme.split('+', 1)[0]
+
+        if scheme in self.schemes:
+            return scheme
+
+        return None
 
 
 class EndpointCapabilities(object):
@@ -33,6 +134,10 @@ class EndpointCapabilities(object):
 
     @property
     def max_io_chunk(self):
+        return self._max_io_chunk
+
+    @property
+    def max_io_size(self):
         return self._max_io_chunk
 
     @property
@@ -59,22 +164,69 @@ class EndpointCapabilities(object):
         )
 
 
-class AbstractFabric(object):
+class AbstractEndpoint(object):
     __slots__ = (
         'uri',
         'transport', 'transport_kwargs',
-        'stream', 'capabilities'
+        'stream', 'capabilities',
+
+         '_name'
     )
 
-    def __init__(self, uri, capabilities=None, kwargs={}):
+    SCHEMES = Schemes()
+
+    def __init__(self, uri, capabilities=None, name=None):
         self.uri = uri
         self.transport = None
         self.transport_kwargs = {}
         self.capabilities = capabilities or EndpointCapabilities()
         self.stream = capabilities.default_stream if capabilities else None
 
-    def set_transport(self, transport, kwargs):
+        self._name = name or str(id(self))
+
+    @classmethod
+    def create(cls, uri, kwargs, capabilities=None):
+        return cls(
+            uri, capabilities, **cls.keywords().from_kwargs(kwargs)
+        )
+
+    @classmethod
+    def keywords(cls):
+        return Keywords()
+
+    @classmethod
+    def schemes(cls):
+        return cls.SCHEMES.schemes
+
+    @classmethod
+    def supports_uri(cls, uri):
+        return bool(cls.SCHEMES.from_parsed_uri(uri))
+
+    @classmethod
+    def is_client(cls):
+        raise NotImplementedError(
+            '{}.is_client() not implemented'.format(
+                cls.__name__
+            )
+        )
+
+    @classmethod
+    def is_server(cls):
+        raise NotImplementedError(
+            '{}.is_server() not implemented'.format(
+                cls.__name__
+            )
+        )
+
+    @property
+    def name(self):
+        return self._name
+
+    def set_transport(self, transport, credentials, kwargs):
         self.transport = transport
+
+        kwargs = dict(kwargs)
+        kwargs['credentials'] = credentials
         self.transport_kwargs = kwargs
 
     def set_stream(self, stream):
@@ -86,8 +238,13 @@ class AbstractFabric(object):
     def __call__(self, kwargs):
         raise NotImplementedError('{}.__call__ is not implemented')
 
+    def __repr__(self):
+        return '<{} (name={} handle={})>'.format(
+            self.__class__.__name__, self._name, self.handle)
 
-class AbstractEndpoint(AbstractFabric):
+
+
+class AbstractClientEndpoint(AbstractEndpoint):
     __slots__ = (
         '_handle', '_name', '_closed', '_once'
     )
@@ -95,11 +252,20 @@ class AbstractEndpoint(AbstractFabric):
     def __init__(self, uri, capabilities=None, handle=None, name=None):
 
         self._handle = handle
-        self._name = name
         self._closed = False
         self._once = Lock()
 
-        super(AbstractEndpoint, self).__init__(uri, capabilities)
+        super(AbstractClientEndpoint, self).__init__(
+            uri, capabilities, name
+        )
+
+    @classmethod
+    def is_client(cls):
+        return True
+
+    @classmethod
+    def is_server(cls):
+        return False
 
     @property
     def handle(self):
@@ -109,19 +275,13 @@ class AbstractEndpoint(AbstractFabric):
     def closed(self):
         return self._closed
 
-    @property
-    def name(self):
-        return self._name
-
-    def prepare(self, *args, **kwargs):
+    def prepare(self):
         if self._handle:
             return
 
         self._closed = False
 
-        self._handle, self._name = self._create_handle_impl(
-            *args, **kwargs
-        )
+        self._handle, self._name = self._create_handle_impl()
 
     def __call__(self, is_client=True, close_cb=None):
         if self._closed:
@@ -183,19 +343,15 @@ class AbstractEndpoint(AbstractFabric):
             finally:
                 self._handle = None
 
-    def __repr__(self):
-        return 'AbstractEndpoint({}, {}, klass={})'.format(
-            self._handle, self._name, self.__class__.__name__)
 
-
-class AbstractNonThreadSafeEndpoint(AbstractEndpoint):
+class AbstractNonThreadSafeClient(AbstractClientEndpoint):
     __slots__ = ('_r_lock', '_w_lock')
 
     def __init__(self, *args, **kwargs):
         self._r_lock = Lock()
         self._w_lock = Lock()
 
-        super(AbstractNonThreadSafeEndpoint, self).__init__(
+        super(AbstractNonThreadSafeClient, self).__init__(
             *args, **kwargs
         )
 
@@ -211,8 +367,8 @@ class AbstractNonThreadSafeEndpoint(AbstractEndpoint):
         return self._close_impl()
 
     def __repr__(self):
-        return 'AbstractNonThreadSafeEndpoint({}, {}, klass={})'.format(
-            self._handle, self._name, self.__class__.__name__)
+        return '<{}({}, {})>'.format(
+            self.__class__.__name__, self._handle, self._name)
 
 
 class AbstractServerInitWatchdog(Thread):
@@ -253,7 +409,7 @@ class AbstractClientException(Exception):
     __slots__ = ('clients', )
 
 
-class AbstractServer(AbstractFabric):
+class AbstractServer(AbstractEndpoint):
     __slots__ = (
         'uris',
         'pupy_srv',
@@ -280,8 +436,8 @@ class AbstractServer(AbstractFabric):
 
         if self.pupy_srv and self.pupy_srv.config:
             ping = self.pupy_srv.config.get('pupyd', 'ping')
-            self.ping = ping and ping not in (
-                '0', '-1', 'N', 'n', 'false', 'False', 'no', 'No'
+            self.ping = ping and ping.lower() not in (
+                '0', '-1', 'n', 'false', 'no'
             )
         else:
             self.ping = False
@@ -301,12 +457,17 @@ class AbstractServer(AbstractFabric):
             self.ping_interval = None
             self.ping_timeout = None
 
-        if uris:
-            self._set_uris(uris)
-
         super(AbstractServer, self).__init__(
-            self._split_uri(uri), capabilities
+            self._split_uri(uris), capabilities
         )
+
+    @classmethod
+    def is_client(cls):
+        return False
+
+    @classmethod
+    def is_server(cls):
+        return True
 
     def _split_uri(self, uri):
         if isinstance(uri, str):
@@ -331,7 +492,7 @@ class AbstractServer(AbstractFabric):
             )
         )
 
-    def prepare(self, *args, **kwargs):
+    def prepare(self):
         if self._initialized:
             return
 
@@ -413,8 +574,8 @@ class AbstractServer(AbstractFabric):
                     self.__class__.__name__, e)
                 raise
 
-    def _impl_resolve(self, uri):
-        return uri
+    def _impl_resolve(self):
+        return self.uris
 
     def _impl_listen(self):
         pass
