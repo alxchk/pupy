@@ -54,7 +54,7 @@ p4a.bootstrap = badservice
 android.arch = armeabi-v7a
 
 [buildozer]
-log_level = 1
+log_level = 2
 warn_on_root = 0
 build_dir = %BUILDOZER%
 # bin_dir = ./bin
