@@ -148,15 +148,20 @@ static PHCUSTOMLIBRARY _FindMemoryModule(LPCSTR name, HMODULE module)
 
         dprint(
             "_FindMemoryModule by name %s -> %p (%p)\n",
-            psName, phIdx, phIdx? phIdx->module : NULL);
+            psName, phIdx,
+            phIdx? phIdx->module : NULL
+        );
     } else {
-
         HASH_FIND(
             by_module, libraries->by_module,
             &module, sizeof(void *), phIdx
         );
 
-        dprint("_FindMemoryModule by module %p -> %p (%p)\n", module, phIdx, phIdx? phIdx->module : NULL);
+        dprint(
+            "_FindMemoryModule by module %p -> %p (%p)\n",
+            module, phIdx,
+            phIdx? phIdx->module : NULL
+        );
     }
 
     LeaveCriticalSection(&libraries->lock);
@@ -460,7 +465,7 @@ BOOL MyGetModuleHandleEx(DWORD dwFlags, LPVOID lpArg, HMODULE *phModule, BOOL bW
     } else {
         if (bWide) {
             dwprint(L"MyGetModuleHandleEx -> by Name (%s)", lpArg);
-            lib = _FindMemoryModuleW(lpArg, NULL);
+            lib = _FindMemoryModuleW(lpArg);
         } else {
             dprint("MyGetModuleHandleEx -> by Name (%s)", lpArg);
             lib = _FindMemoryModule(lpArg, NULL);
@@ -562,7 +567,7 @@ MyLoadLibraryEx(
 HMODULE CALLBACK MyGetModuleHandleW(LPCWSTR name) {
     PHCUSTOMLIBRARY hResult = _FindMemoryModuleW(name);
     if (hResult)
-        return (HMODULE) hResult;
+        return (HMODULE) hResult->module;
 
     return GetModuleHandleW(name);
 }
