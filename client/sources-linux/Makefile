@@ -2,6 +2,8 @@ CC ?= gcc
 PYMAJ ?= 2
 PYMIN ?= 7
 
+PY_MAJOR_VERSION ?= $(PYMAJ)
+
 OS ?= $(shell uname -s)
 MACH ?= $(shell uname -m)
 SUFFIX ?= $(PYMAJ)$(PYMIN).$(shell echo $(OS) | cut -c -3 | tr '[:upper:]' '[:lower:]')
@@ -24,15 +26,17 @@ endif
 CFLAGS += "-DOPENSSL_LIB_VERSION=\"$(OPENSSL_LIB_VERSION)\""
 
 ifeq ($(LIBPYTHON),)
-LIBPYTHON := $(shell /sbin/ldconfig -p  | awk '/libpython$(PYMAJ).$(PYMIN).so/{print $$4}' | head -n 1)
+LIBPYTHON := $(shell /sbin/ldconfig -p | awk '/libpython$(PYMAJ)\.$(PYMIN).?\.so/{print $$4}' | head -n 1)
 endif
 
+CFLAGS += "-DPYTHON_LIB_NAME=\"$(notdir $(LIBPYTHON))\""
+
 ifeq ($(LIBCRYPTO),)
-LIBCRYPTO := $(shell /sbin/ldconfig -p  | awk '/libcrypto.so.$(OPENSSL_LIB_VERSION)/{print $$4}' | head -n 1)
+LIBCRYPTO := $(shell /sbin/ldconfig -p  | awk '/libcrypto\.so\.$(OPENSSL_LIB_VERSION)/{print $$4}' | head -n 1)
 endif
 
 ifeq ($(LIBSSL),)
-LIBSSL := $(shell /sbin/ldconfig -p  | awk '/libssl.so.$(OPENSSL_LIB_VERSION)/{print $$4}' | head -n 1)
+LIBSSL := $(shell /sbin/ldconfig -p  | awk '/libssl\.so\.$(OPENSSL_LIB_VERSION)/{print $$4}' | head -n 1)
 endif
 
 XZARGS ?= "gcc" "aligned(0x1000)" 'section(".xzrodata")'
@@ -88,9 +92,10 @@ endif
 
 ifneq ($(DEBUG_USE_OS_PYTHON),)
 CFLAGS += -DDEBUG_USE_OS_PYTHON
+FIX_SONAME := $(notdir $(LIBPYTHON))
 endif
 
-PYTHON ?= python
+PYTHON ?= python$(PYMAJ).$(PYMIN)
 TEMPLATE_OUTPUT_PATH ?= ../../pupy/payload_templates/
 
 SHARED_OBJS := main_so.o pupy_shared.o tmplibrary_lmid.o pupy_load_shared.o
@@ -99,7 +104,7 @@ APP_OBJS := main_exe.o pupy.o tmplibrary.o pupy_load.o
 COMMON_OBJS := daemonize.o decompress.o
 LOAD_DEPS := \
 	resources/$(MACH)/libssl.c resources/$(MACH)/libcrypto.c \
-	resources/$(MACH)/python$(PYMAJ)$(PYMIN).c \
+	resources/$(MACH)/python.c \
 	resources/$(MACH)/library.c \
 	../common/Python-dynload.c ../common/Python-dynload.h \
 	../common/Python-dynload.c ../common/Python-dynload.h \
@@ -170,7 +175,7 @@ tmplibrary_lmid.o: tmplibrary.c
 	$(CC) -c -o $@ $< $(CFLAGS) -DWIP_LMID
 
 import-tab.c import-tab.h: ../mktab.py
-	$(PYTHON) $(PFLAGS) $<
+	$(PYTHON) $(PFLAGS) $< UCS4 $(PYMAJ) $(PYMIN)
 
 ifeq ($(UNCOMPRESSED),)
 LzmaDec.o: ../common/LzmaDec.c
@@ -195,7 +200,7 @@ ld_hooks_$(NAME).c: ../gen_resource_header.py ld_hooks_$(NAME).so
 injector/%.o: injector/%.c
 	$(CC) -c $(LINUX_INJECT_CFLAGS) $(CFLAGS) -o $@ $<
 
-resources/$(MACH)/python$(PYMAJ)$(PYMIN).so: $(LIBPYTHON)
+resources/$(MACH)/python.so: $(LIBPYTHON)
 	@mkdir -p resources/$(MACH)
 	cp -f $< $@.tmp
 	-chmod 600 $@.tmp
@@ -220,9 +225,9 @@ resources/$(MACH)/libssl.so: $(LIBSSL)
 	rm -f $@.tmp
 
 resources/$(MACH)/library.zip: ../build_library_zip.py ../additional_imports.py
-	$(PYTHON) -OO $(PFLAGS) $< $@
+	$(PYTHON) $(PFLAGS) $< $@ $(FIX_SONAME)
 
-resources/$(MACH)/python$(PYMAJ)$(PYMIN).c: ../gen_resource_header.py resources/$(MACH)/python$(PYMAJ)$(PYMIN).so
+resources/$(MACH)/python.c: ../gen_resource_header.py resources/$(MACH)/python.so
 	$(PYTHON) $(PFLAGS) $+ $@ $(COMPRESSED) $(XZARGS)
 
 resources/$(MACH)/libssl.c: ../gen_resource_header.py resources/$(MACH)/libssl.so

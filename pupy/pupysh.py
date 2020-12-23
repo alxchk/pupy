@@ -48,7 +48,9 @@ args = None
 
 if __name__ == '__main__':
     ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__)))
-    sys.path.insert(0, os.path.join(ROOT, 'library_patches'))
+    sys.path.insert(0, os.path.join(
+        ROOT, 'library_patches', 'py{}{}'.format(
+            sys.version_info.major, sys.version_info.minor)))
     sys.path.append(os.path.join(ROOT, 'packages', 'all'))
 
     parser = argparse.ArgumentParser(prog='pupysh', description="Pupy console")

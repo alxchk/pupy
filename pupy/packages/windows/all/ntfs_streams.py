@@ -4,17 +4,18 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 from __future__ import unicode_literals
+
 __all__ = [
   'get_streams'
 ]
-
-from sys import getfilesystemencoding
 
 from ctypes import WinDLL, c_void_p, byref, Structure
 from ctypes import c_longlong as LONGLONG
 from ctypes.wintypes import (
     LPWSTR, DWORD, WCHAR, HANDLE, BOOL
 )
+
+from network.lib.convcompat import fs_as_unicode_string
 
 kernel32 = WinDLL('kernel32')
 
@@ -64,9 +65,7 @@ def get_streams(filename):
     if not NTFS_STREAMS_API_PRESENT:
         return []
 
-    if type(filename) == str:
-        filename = filename.decode(
-            getfilesystemencoding())
+    filename = fs_as_unicode_string(filename)
 
     file_infos = WIN32_FIND_STREAM_DATA()
 

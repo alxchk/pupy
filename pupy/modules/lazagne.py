@@ -27,9 +27,13 @@ class LaZagne(PupyModule):
     """
 
     dependencies = {
-        'all': [
+        'all:py2': [
             'whole', 'sqlite3', 'xml', 'calendar',
             'ConfigParser', 'lazagne', 'pyasn1'
+        ],
+        'all:py3': [
+            'whole', 'sqlite3', 'xml', 'calendar',
+            'lazagne', 'pyasn1', 'asn1crypto'
         ],
         'linux': [
             'secretstorage', 'crypt'

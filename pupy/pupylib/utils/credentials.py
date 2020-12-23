@@ -85,7 +85,7 @@ class Credentials(object):
         data = as_unicode_string_deep(list(data), fail=False)
 
         for d in data:
-            for k in d:
+            for k in list(d):
                 if not k.lower() == k:
                     d[k.lower()] = d[k]
                     del d[k]

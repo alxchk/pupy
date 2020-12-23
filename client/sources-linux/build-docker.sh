@@ -3,6 +3,10 @@
 SELF=$(readlink -f "$0")
 SELFPWD=$(dirname "$SELF")
 SRC=${SELFPWD:-$(pwd)}
+PYMAJ=${PYMAJ:-2}
+PYMIN=${PYMIN:-7}
+
+echo "[+] Build python$PYMAJ.$PYMIN"
 
 cd $SRC
 
@@ -42,7 +46,7 @@ $PIP_INSTALL \
     pyaml ushlex rsa netaddr==0.7.19 pyyaml ecdsa idna impacket \
     paramiko pylzma pydbus python-ptrace psutil scandir \
     scapy colorama pyOpenSSL python-xlib msgpack-python \
-    u-msgpack-python poster dnslib pyxattr pylibacl http_parser \
+    u-msgpack-python dnslib pyxattr pylibacl http_parser \
     https://github.com/alxchk/tinyec/archive/master.zip \
     https://github.com/warner/python-ed25519/archive/master.zip \
     https://github.com/alxchk/urllib-auth/archive/master.zip \
@@ -58,9 +62,14 @@ else
     CFLAGS_PYJNIUS="$CFLAGS -D_LP64"
 fi
 
-CFLAGS="${CFLAGS_PYJNIUS}" NO_JAVA=1 \
-    python -m pip install \
-    https://github.com/alxchk/pyjnius/archive/master.zip
+if [ "$PYMAJ" = "2" ]; then
+    $PIP_INSTALL poster
+
+    # Broken py3
+    CFLAGS="${CFLAGS_PYJNIUS}" NO_JAVA=1 \
+	  python -m pip install \
+	  https://github.com/alxchk/pyjnius/archive/master.zip
+fi
 
 CFLAGS="$CFLAGS -DDUK_DOUBLE_INFINITY=\"(1.0 / 0.0)\"" \
 LDFLAGS="$LDFLAGS -lm" \
@@ -78,9 +87,15 @@ rm -rf $PYKCP/{kcp.so,kcp.pyd,kcp.dll,build,KCP.egg-info}
 $PIP_INSTALL --force $PYKCP
 python -c 'import kcp' || exit 1
 
-echo "[+] Compile opus"
-(cd $PYOPUS && make clean && LDFLAGS="$LDFLAGS -lm" make && mv -f opus.so /usr/lib/python2.7/site-packages)
-python -c 'import opus' || exit 1
+if [ "$PYMAJ" = "2" ]; then
+    # Broken py3
+    echo "[+] Compile opus"
+    (
+	cd $PYOPUS && make clean && LDFLAGS="$LDFLAGS -lm" make && \
+	    mv -f opus.so /usr/lib/python$PYMAJ.$PYMIN/site-packages \
+    )
+    python -c 'import opus' || exit 1
+fi
 
 echo "[+] Compile pyuv"
 
@@ -103,22 +118,23 @@ fi
 # $PIP_INSTALL --no-binary :all: pycryptodome==3.7.0
 $PIP_INSTALL --no-binary :all: https://github.com/Legrandin/pycryptodome/archive/master.zip
 
-cd /usr/lib/python2.7
+echo "[+] Prepare to compress python$PYMAJ.$PYMIN library"
+cd /usr/lib/python$PYMAJ.$PYMIN
 
 echo "[+] Strip python modules"
 find -name "*.so" | while read f; do strip $f; done
 
 echo "[+] Build python template ($TOOLCHAIN_ARCH)"
 
-rm -f ${TEMPLATES}/linux-${TOOLCHAIN_ARCH}.zip
-zip -y -r -9 ${TEMPLATES}/linux-${TOOLCHAIN_ARCH}.zip . \
+rm -f ${TEMPLATES}/linux-${TOOLCHAIN_ARCH}-$PYMAJ$PYMIN.zip
+zip -y -r -9 ${TEMPLATES}/linux-${TOOLCHAIN_ARCH}-$PYMAJ$PYMIN.zip . \
     -x "*.a" -x "*.la" -x "*.o" -x "*.whl" -x "*.txt" -x "*.pyo" -x "*.pyc" \
     -x "*test/*" -x "*tests/*" -x "*examples/*" \
-    -x "*.egg-info/*" -x "*.dist-info/*" \
+    -x "*.egg-info/*" -x "*.dist-info/*" -x "*__pycache__/*" \
     -x "idlelib/*" -x "lib-tk/*" -x "tk*" -x "tcl*" >/dev/null
 
 cd /usr/lib
-zip -9 ${TEMPLATES}/linux-${TOOLCHAIN_ARCH}-27.zip \
+zip -9 ${TEMPLATES}/linux-${TOOLCHAIN_ARCH}-$PYMAJ$PYMIN.zip \
     libpq.so libodbc.so psqlodbcw.so libodbcinst.so libmaodbc.so
 
 ldconfig
@@ -128,22 +144,22 @@ echo "[+] Build pupy"
 case $TOOLCHAIN_ARCH in
 amd64)
     MAKEFLAGS="ARCH=64 MACH=x86_64"
-    TARGETS="pupyx64d-27.lin pupyx64d-27.lin"
-    TARGETS="$TARGETS pupyx64-27.lin pupyx64-27.lin.so"
+    TARGETS="pupyx64d-$PYMAJ$PYMIN.lin pupyx64d-$PYMAJ$PYMIN.lin"
+    TARGETS="$TARGETS pupyx64-$PYMAJ$PYMIN.lin pupyx64-$PYMAJ$PYMIN.lin.so"
     ;;
 
 x86)
     MAKEFLAGS="ARCH=32 PIE= MACH=i686"
-    TARGETS="pupyx86d-27.lin pupyx86d-27.lin.so"
-    TARGTS="$TARGETS pupyx86-27.lin pupyx86-27.lin.so"
+    TARGETS="pupyx86d-$PYMAJ$PYMIN.lin pupyx86d-$PYMAJ$PYMIN.lin.so"
+    TARGTS="$TARGETS pupyx86-$PYMAJ$PYMIN.lin pupyx86-$PYMAJ$PYMIN.lin.so"
     ;;
 
 *)
     LIBS="LIBSSL=/usr/lib/libssl.so LIBCRYPTO=/usr/lib/libcrypto.so"
-    LIBS="$LIBS LIBPYTHON=/usr/lib/libpython2.7.so"
+    LIBS="$LIBS LIBPYTHON=/usr/lib/libpython$PYMAJ.$PYMINso"
     MAKEFLAGS="MACH=${TOOLCHAIN_ARCH} $LIBS"
     TARGETS="pupy${TOOLCHAIN_ARCH}d.lin pupy${TOOLCHAIN_ARCH}d.lin.so"
-    TARGTS="$TARGETS pupy${TOOLCHAIN_ARCH}-27.lin pupy${TOOLCHAIN_ARCH}-27.lin.so"
+    TARGTS="$TARGETS pupy${TOOLCHAIN_ARCH}-$PYMAJ$PYMIN.lin pupy${TOOLCHAIN_ARCH}-$PYMAJ$PYMIN.lin.so"
     ;;
 esac
 

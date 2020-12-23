@@ -4,6 +4,7 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 from __future__ import unicode_literals
+
 __all__ = ('apply_dl_hacks',)
 
 import os
@@ -23,7 +24,10 @@ NATIVE_LIB_PATTERNS = [
     'lib{}.so', '{}.so',
     'lib{}.pyd', '{}.pyd',
     'lib{}.dll', '{}.dll',
-    'lib{}27.dll'
+    'lib{{}}{}{}.dll'.format(
+        sys.version_info.major,
+        sys.version_info.minor
+    )
 ]
 
 
@@ -96,11 +100,21 @@ def apply_dl_hacks():
 
     if sys.platform == 'win32':
         try:
-            libpython = ctypes.PyDLL('python27.dll')
+            libpython = ctypes.PyDLL(
+                'python{}{}.dll'.format(
+                    sys.version_info.major,
+                    sys.version_info.minor
+                )
+            )
         except WindowsError:
-            pupy.dprint('python27.dll not found')
+            pupy.dprint('python dll not found')
     else:
-        for libname in (None, 'libpython2.7.so.1.0', 'libpython2.7.so'):
+        pylib = 'libpython{}.{}'.format(
+            sys.version_info.major,
+            sys.version_info.minor,
+        )
+
+        for libname in (None, pylib+'.so.1.0', pylib+'m.so.1.0', pylib+'.so'):
             try:
                 candidate = ctypes.PyDLL(libname)
             except OSError:

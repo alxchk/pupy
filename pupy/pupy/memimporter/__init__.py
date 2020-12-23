@@ -21,7 +21,7 @@ from pupy import get_logger
 logger = get_logger('pymemimporter')
 
 
-def import_module(data, initname, fullname, path):
+def import_module(data, spec, initname, fullname, path):
     logger.debug('Import module %s', fullname)
     try:
         return load_content(data, path, False, initname)

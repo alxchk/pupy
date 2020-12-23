@@ -8,9 +8,14 @@ from __future__ import division
 from __future__ import print_function
 from __future__ import unicode_literals
 
-from pupylib.PupyModule import config, PupyModule, PupyArgumentParser
 from modules.lib.windows.memory_exec import exec_pe
 from modules.lib.linux.exec_elf import mexec
+
+from pupylib.PupyModule import (
+    config, PupyModule, PupyArgumentParser,
+    QA_DANGEROUS
+)
+
 
 import pupygen
 
@@ -22,6 +27,9 @@ class MemoryDuplicate(PupyModule):
     """
         Duplicate the current pupy payload by executing it from memory
     """
+
+    qa = QA_DANGEROUS
+
     interactive = 1
     dependencies = {
         'linux': ['memexec'],

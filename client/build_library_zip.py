@@ -6,15 +6,63 @@ import site
 import sys
 import sysconfig
 import os
-import imp
 import marshal
 
 import shutil
 import zipfile
 
+import tempfile
+
 from glob import glob
 from distutils.core import setup
 
+if sys.version_info.major > 2:
+    import importlib
+    import _imp
+
+    EXTS_NATIVE = tuple(_imp.extension_suffixes())
+
+    find_spec = importlib.util.find_spec
+    for loader in sys.meta_path:
+        if loader.__name__ == 'PathFinder':
+            find_spec = loader.find_spec
+            break
+
+    def find_module(name):
+        try:
+            found = find_spec(name, None)
+        except ValueError:
+            print('Failed to resolve name: ' + name)
+            return None, None
+
+        if found is None:
+            return None, None
+
+        if found.submodule_search_locations:
+            return next(iter(found.submodule_search_locations)), True
+
+        if found.origin and not os.path.exists(found.origin):
+            return None, None
+
+        return found.origin, False
+
+else:
+    import imp
+
+    EXTS_NATIVE = tuple(sorted([
+        suffix for suffix, _, extype in imp.get_suffixes()
+        if extype == imp.C_EXTENSION
+    ], reverse=True))
+
+    def find_module(name):
+        _, fpath, info = imp.find_module(name)
+        return fpath, info[2] == imp.PKG_DIRECTORY
+
+
+EXTS_SOURCES = ('.py',)
+EXTS_COMPILED = ('.pye', '.pyo', '.pyc')
+EXTS_NON_NATIVE = EXTS_SOURCES + EXTS_COMPILED
+EXTS_ALL = EXTS_NATIVE + EXTS_NON_NATIVE
 
 THIS = os.path.abspath(__file__)
 ROOT = os.path.dirname(os.path.dirname(THIS))
@@ -22,11 +70,15 @@ ROOT = os.path.dirname(os.path.dirname(THIS))
 print("THIS:", THIS)
 print("ROOT: ", ROOT)
 
-PATCHES = os.path.join(ROOT, 'pupy', 'library_patches')
+PATCHES = os.path.join(
+    ROOT, 'pupy', 'library_patches', 'py{}{}'.format(
+        sys.version_info.major, sys.version_info.minor
+    )
+)
 
-sys.path.insert(0, PATCHES)
 sys.path.append(os.path.join(ROOT, 'pupy'))
 sys.path.append(os.path.join(ROOT, 'pupy', 'pupylib'))
+sys.path.append(PATCHES)
 
 pupycompile = __import__('PupyCompile').pupycompile
 
@@ -42,12 +94,12 @@ else:
 
 import additional_imports
 
-print("Load pupy")
+print("Load pupy (sys.path:", sys.path, ")")
 
 try:
     pupy = __import__('pupy')
     print("Module loaded")
-    pupy.prepare(debug=True)
+    pupy.prepare(debug=True, setup_importer=False)
     print("Prepare called")
 except Exception as e:
     print("Load pupy.. FAILED: {}".format(e))
@@ -61,6 +113,14 @@ sys_modules = [
 ]
 
 compile_map = []
+
+
+def splitext(filepath):
+    for ext in EXTS_ALL:
+        if filepath.endswith(ext):
+            return filepath[:-len(ext)], ext
+
+    return filepath.rsplit('.', 1)
 
 
 def compile_py(path):
@@ -93,9 +153,14 @@ all_dependencies = set(
 all_dependencies.add('site')
 all_dependencies.add('sysconfig')
 
-exceptions = (
+exceptions = [
     'pupy', 'network', 'pupyimporter', 'additional_imports'
-)
+]
+
+if sys.version_info.major > 2:
+    # all_dependencies.add('_frozen_importlib_external')
+    exceptions.append('_frozen_importlib')
+    exceptions.append('_frozen_importlib_external')
 
 all_dependencies = sorted(list(set(all_dependencies)))
 for dep in list(all_dependencies):
@@ -143,6 +208,11 @@ for dep in ('cffi', 'pycparser', 'pyaes', 'distutils'):
 
 print("ALLDEPS: ", all_dependencies)
 
+dest_file = sys.argv[1]
+fix_soname = None
+
+if len(sys.argv) > 2:
+    fix_soname = sys.argv[2]
 
 zf = zipfile.ZipFile(sys.argv[1], mode='w', compression=zipfile.ZIP_DEFLATED)
 
@@ -171,33 +241,49 @@ zf.writestr(
 )
 
 if 'win' in sys.platform:
-    for root, _, files in os.walk('C:\\Python27\\Lib\\site-packages'):
+    pywintypes = 'pywintypes{}{}.dll'.format(
+        sys.version_info.major,
+        sys.version_info.minor
+    )
+
+    for root, _, files in os.walk(sys.prefix):
         for file in files:
-            if file.lower() in ('pywintypes27.dll', '_win32sysloader.pyd'):
+            if file.lower() in (pywintypes, '_win32sysloader.pyd'):
                 zf.write(os.path.join(root, file), file)
+
 
 try:
     content = set(ignore)
     for dep in all_dependencies:
-        _, mpath, info = imp.find_module(dep)
+        mpath, is_directory = find_module(dep)
+        if mpath is None:
+            print("NOT FOUND:", dep)
+            continue
 
         print("DEPENDENCY: ", dep, mpath)
-        if info[2] == imp.PKG_DIRECTORY:
+        if is_directory:
             print('adding package %s / %s' % (dep, mpath))
             path, root = os.path.split(mpath)
             for root, dirs, files in os.walk(mpath):
-                for f in list(set([x.rsplit('.', 1)[0] for x in files])):
+                dir_files = list(set([splitext(x)[0] for x in files]))
+                if '__init__' in dir_files:
+                    # Ensure __init__ always go first
+                    dir_files.remove('__init__')
+                    dir_files.insert(0, '__init__')
+
+                for f in dir_files:
                     found = False
                     need_compile = True
-                    for ext in ('.dll', '.so', '.pyd', '.py', '.pyc', '.pyo'):
-                        if (ext == '.pyc' or ext == '.pyo') and found:
+                    for ext in EXTS_ALL:
+                        if ext in EXTS_COMPILED and found:
                             continue
 
                         pypath = os.path.join(root, f+ext)
                         if os.path.exists(pypath):
                             ziproot = root[len(path)+1:].replace('\\', '/')
-                            zipname = '/'.join([ziproot,
-                                                f.split('.', 1)[0] + ext])
+                            zipname = '/'.join([
+                                ziproot, splitext(f)[0] + ext
+                            ])
                             found = True
 
                             if ziproot.startswith('site-packages'):
@@ -236,6 +322,17 @@ try:
                                     continue
 
                                 zf.writestr(zipname+'o', bytecode)
+                            elif fix_soname and ext == '.so':
+                                with tempfile.NamedTemporaryFile(delete=True) as tmp:
+                                    tmp.write(open(os.path.join(
+                                        file_root, f+ext), 'rb').read())
+                                    tmp.flush()
+
+                                    os.system('patchelf --add-needed {} {}'.format(
+                                        fix_soname, tmp.name))
+
+                                    zf.write(tmp.name, zipname)
+
                             else:
                                 zf.write(os.path.join(
                                     file_root, f+ext), zipname)
@@ -249,7 +346,7 @@ try:
                 continue
 
             found_patch = None
-            for extp in ('.py', '.pyc', '.pyo'):
+            for extp in EXTS_NON_NATIVE:
                 if os.path.exists(os.path.join(PATCHES, dep+extp)):
                     found_patch = (os.path.join(PATCHES, dep+extp), extp)
                     break
@@ -279,9 +376,19 @@ try:
                         srcfile = srcfile[:-1]
 
                     zf.writestr(dep+'.pyo', compile_py(srcfile))
+                elif fix_soname and mpath.endswith('.so'):
+                    with tempfile.NamedTemporaryFile(delete=True) as tmp:
+                        tmp.write(open(mpath, 'rb').read())
+                        tmp.flush()
+
+                        os.system('patchelf --add-needed {} {}'.format(
+                            fix_soname, tmp.name))
+
+                        zf.write(tmp.name, dep+ext)
                 else:
                     zf.write(mpath, dep+ext)
 
 finally:
+    zf.writestr('extension-suffix', '\n'.join(EXTS_NATIVE))
     zf.writestr('fid.toc', marshal.dumps(compile_map))
     zf.close()

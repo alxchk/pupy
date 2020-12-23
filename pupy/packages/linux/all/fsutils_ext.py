@@ -56,7 +56,9 @@ def getacls(filepath):
         if not has_extended(filepath):
             return None
 
-        acls += ACL(file=fs_native_filepath).to_any_text()
+        acls += as_unicode_string(
+            ACL(file=fs_native_filepath).to_any_text()
+        )
     except (OSError, IOError):
         pass
 

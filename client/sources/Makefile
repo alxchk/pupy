@@ -1,20 +1,42 @@
+ifndef PYTHONPATH
+$(error PYTHONPATH must be specified)
+endif
+
+ifndef ARCH
+$(error ARCH must be specified)
+endif
+
 BUILDENV ?= $(PWD)/buildenv
 
 PYMAJ ?= 2
 PYMIN ?= 7
+
 SUFFIX ?= $(PYMAJ)$(PYMIN).
 
-PYTHONPATH ?= C:\\Python$(PYMAJ)$(PYMIN)
+# TODO: Fix this in docker
+ifeq "$(PYMAJ)" "3"
+ifeq "$(ARCH)" "win64"
+WINE_PYTHONPATH ?= C:\\Python$(PYMAJ)-64
+else
+WINE_PYTHONPATH ?= C:\\Python$(PYMAJ)-32
+endif
+else
+WINE_PYTHONPATH ?= C:\\Python$(PYMAJ)$(PYMIN)
+endif
+
+
+ifeq "$(PYMAJ)" "2"
+SSLPATH ?= $(PYTHONPATH)
+else
+ 
+SSLPATH ?= $(PYTHONPATH)/DLLs
+endif
 
 TEMPLATE_OUTPUT_PATH=../../pupy/payload_templates
 
-ifndef ARCH
-$(error You must specify an architecture - win64 or win32)
-endif
-
-CC := $(BUILDENV)/$(ARCH)/cl.sh
-PYTHON := $(BUILDENV)/$(ARCH)/python.sh
-HOST_PYTHON := python
+CC ?= $(BUILDENV)/$(ARCH)/cl.sh
+PYTHON ?= $(BUILDENV)/$(ARCH)/python.sh
+HOST_PYTHON ?= python${PYMAJ}
 OPENSSL_ABI ?= 1_1
 
 ifeq "$(ARCH)" "win64"
@@ -29,8 +51,29 @@ LIBCRYPTO := libcrypto-$(OPENSSL_ABI).dll
 LIBSSL := libssl-$(OPENSSL_ABI).dll
 endif
 
+
+ifeq "$(PYMAJ)" "3"
+VCRUNTIME := vcruntime140.dll
+LIBFFI := libffi-7.dll
+# No -x64 prefix
+LIBCRYPTO := libcrypto-$(OPENSSL_ABI).dll
+LIBSSL := libssl-$(OPENSSL_ABI).dll
+
+CFLAGS += /DEXTERNAL_LIBFFI
+
+else
+VCRUNTIME := msvcr90.dll
+endif
+
 CFLAGS += /Iresources\\$(ARCH) /Iresources /DHAVE_WINDOW
-CFLAGS += /DLIBCRYPTO=\"$(LIBCRYPTO)\" /DLIBSSL=\"$(LIBSSL)\"
+CFLAGS += \
+	/DLIBCRYPTO=\"$(LIBCRYPTO)\" \
+	/DLIBSSL=\"$(LIBSSL)\" \
+	/DLIBFFI=\"$(LIBFFI)\" \
+	/DVCRUNTIME=\"$(VCRUNTIME)\" \
+	/DPYTHON_LIB_NAME=\"python$(PYMAJ)$(PYMIN).dll\" \
+	/DPYMAJ=$(PYMAJ) /DPYMIN=$(PYMIN)
+
 #CFLAGS += /Iresources\\$(ARCH) /Iresources
 
 CFLAGS += /EHa
@@ -81,8 +124,8 @@ CFLAGS += /D_PUPY_DYNLOAD /D_PUPY_PRIVATE_NT
 SHARED_OBJS += ReflectiveLoader.obj
 
 LIBPYTHON_DIR ?= C:\\Python$(PYMAJ)$(PYMIN)
-LIBPYTHON_LIBS := $(PYTHONPATH)\\libs\\python$(PYMAJ)$(PYMIN).lib advapi32.lib
-LIBPYTHON_INC := /I$(PYTHONPATH)/Include
+LIBPYTHON_LIBS := $(WINE_PYTHONPATH)\\libs\\python$(PYMAJ)$(PYMIN).lib advapi32.lib
+LIBPYTHON_INC := /I$(WINE_PYTHONPATH)\\Include
 else
 SHARED_OBJS += $(PUPY_MODULE)
 APP_OBJS += $(PUPY_MODULE)
@@ -114,12 +157,16 @@ endif
 
 PUPY_LOAD_DEPS := \
 	pupy_load.c \
-	resources/$(ARCH)/library.c \
-	resources/$(ARCH)/msvcr90.c \
-	resources/$(ARCH)/python$(PYMAJ)$(PYMIN).c \
-	resources/$(ARCH)/libssl.c \
-	resources/$(ARCH)/libcrypto.c \
-	import-tab.c revision.h
+        resources/$(ARCH)/library.c \
+        resources/$(ARCH)/vcruntime.c \
+        resources/$(ARCH)/python.c \
+        resources/$(ARCH)/libssl.c \
+        resources/$(ARCH)/libcrypto.c \
+        import-tab.c revision.h
+
+ifeq "$(PYMAJ)" "3"
+PUPY_LOAD_DEPS += resources/$(ARCH)/libffi.c
+endif
 
 TARGETS := \
 	$(TEMPLATE_OUTPUT_PATH)/pupy$(PPARCH)-$(SUFFIX)exe \
@@ -141,7 +188,7 @@ revision.h:
 	 else rev=$$COMMIT; fi; echo "#define GIT_REVISION_HEAD \"$$rev\"" >$@
 
 import-tab.c import-tab.h: ../mktab.py
-	$(HOST_PYTHON) $(PFLAGS) $< UCS2
+	$(HOST_PYTHON) $(PFLAGS) $< UCS2 $(PYMAJ) $(PYMIN)
 
 resources/$(ARCH)/library.txt: ../gen_library_compressed_string.py resources/$(ARCH)/library.zip
 	$(HOST_PYTHON) ../gen_library_compressed_string.py $@ resources/$(ARCH)/library.zip
@@ -152,19 +199,25 @@ resources/$(ARCH)/library.zip: ../build_library_zip.py
 resources/$(ARCH)/library.c: ../gen_resource_header.py resources/$(ARCH)/library.txt resources/$(ARCH)/library.zip
 	$(HOST_PYTHON) ../gen_resource_header.py resources/$(ARCH)/library.txt $@ $(COMPRESSED) $(SECARGS)
 
-resources/$(ARCH)/$(LIBCRYPTO): $(BUILDENV)/$(ARCH)/drive_c/Python$(PYMAJ)$(PYMIN)/$(LIBCRYPTO)
+resources/$(ARCH)/$(LIBCRYPTO): $(SSLPATH)/$(LIBCRYPTO)
 	@mkdir -p resources/$(ARCH)
 	cp $< $@
 
-resources/$(ARCH)/$(LIBSSL): $(BUILDENV)/$(ARCH)/drive_c/Python$(PYMAJ)$(PYMIN)/$(LIBSSL)
+resources/$(ARCH)/$(LIBSSL): $(SSLPATH)/$(LIBSSL)
 	@mkdir -p resources/$(ARCH)
 	cp $< $@
 
-resources/$(ARCH)/python$(PYMAJ)$(PYMIN).dll: $(BUILDENV)/$(ARCH)/drive_c/Python$(PYMAJ)$(PYMIN)/python$(PYMAJ)$(PYMIN).dll
+ifneq ($(LIBFFI),)
+resources/$(ARCH)/$(LIBFFI): $(SSLPATH)/$(LIBFFI)
+	@mkdir -p resources/$(ARCH)
+	cp $< $@
+endif
+
+resources/$(ARCH)/python$(PYMAJ)$(PYMIN).dll: $(PYTHONPATH)/python$(PYMAJ)$(PYMIN).dll
 	@mkdir -p resources/$(ARCH)
 	cp $< $@
 
-resources/$(ARCH)/msvcr90.dll: $(BUILDENV)/$(ARCH)/drive_c/Python$(PYMAJ)$(PYMIN)/msvcr90.dll
+resources/$(ARCH)/$(VCRUNTIME): $(PYTHONPATH)/$(VCRUNTIME)
 	@mkdir -p resources/$(ARCH)
 	cp $< $@
 
@@ -174,10 +227,13 @@ resources/$(ARCH)/libcrypto.c: resources/$(ARCH)/$(LIBCRYPTO) ../gen_resource_he
 resources/$(ARCH)/libssl.c: resources/$(ARCH)/$(LIBSSL) ../gen_resource_header.py
 	$(HOST_PYTHON) ../gen_resource_header.py $< $@ $(COMPRESSED) $(SECARGS)
 
-resources/$(ARCH)/python$(PYMAJ)$(PYMIN).c: resources/$(ARCH)/python$(PYMAJ)$(PYMIN).dll ../gen_resource_header.py
+resources/$(ARCH)/python.c: resources/$(ARCH)/python$(PYMAJ)$(PYMIN).dll ../gen_resource_header.py
 	$(HOST_PYTHON) ../gen_resource_header.py $< $@ $(COMPRESSED) $(SECARGS)
 
-resources/$(ARCH)/msvcr90.c: resources/$(ARCH)/msvcr90.dll ../gen_resource_header.py
+resources/$(ARCH)/vcruntime.c: resources/$(ARCH)/$(VCRUNTIME) ../gen_resource_header.py
+	$(HOST_PYTHON) ../gen_resource_header.py $< $@ $(COMPRESSED) $(SECARGS)
+
+resources/$(ARCH)/libffi.c: resources/$(ARCH)/$(LIBFFI) ../gen_resource_header.py
 	$(HOST_PYTHON) ../gen_resource_header.py $< $@ $(COMPRESSED) $(SECARGS)
 
 resources/$(ARCH)/$(PUPY_PYD_C): \

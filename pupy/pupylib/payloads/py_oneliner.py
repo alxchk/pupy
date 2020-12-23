@@ -33,9 +33,9 @@ def pack_py_payload(target, display, conf, autostart=True):
     stdlib = dependencies.importer(
         target, (
             'pyasn1', 'rsa', 'pyaes',
-            'netaddr', 'tinyec', 'umsgpack',
-            'poster', 'win_inet_pton', 'http_parser',
-            'urllib_auth',
+            'netaddr', 'tinyec', 'poster',
+            'win_inet_pton', 'http_parser',
+            'urllib_auth', 'umsgpack'
         ),
         ignore_native=True, as_dict=True
     )
@@ -50,7 +50,7 @@ def pack_py_payload(target, display, conf, autostart=True):
     )
 
     payload = dependencies.bootstrap(
-        stdlib, conf, autostart
+        target, stdlib, conf, autostart
     ) + '\n'
 
     if target.debug:

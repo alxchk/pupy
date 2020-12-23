@@ -86,7 +86,7 @@ def get_pyver(pyver, config):
             return '27'
         elif pyver == 3:
             # Here will be some default supported Py3 version
-            return '37'
+            return '38'
     elif default:
         return default
     else:

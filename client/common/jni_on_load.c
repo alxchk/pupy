@@ -887,10 +887,27 @@ static PyMethodDef JVM_Methods[] = {
     { NULL, NULL },		/* Sentinel */
 };
 
+
+#if PYMAJ > 2
+static struct PyModuleDef pupy_moduledef = {
+    PyModuleDef_HEAD_INIT,
+    "jvm", jvm_module_doc, -1, JVM_Methods,
+    NULL, NULL, NULL, NULL,
+};
+#endif
+
+
 void setup_jvm_class(void) {
-    PyObject *jvm_klass = Py_InitModule3("jvm", JVM_Methods, jvm_module_doc);
+    PyObject *jvm_klass = NULL;
+
+#if PYMAJ > 2
+    jvm_klass = PyModule_Create(&pupy_moduledef);
+#else
+    jvm_klass = Py_InitModule3("jvm", JVM_Methods, jvm_module_doc);
+#endif
+
     if (!jvm_klass) {
-        return NULL;
+        return;
     }
 
     jvm_error = PyErr_NewException("jvm.error", NULL, NULL);

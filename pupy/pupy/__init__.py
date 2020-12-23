@@ -61,9 +61,33 @@ __all__ = (
 )
 
 import sys
-import imp
 import marshal
 import gc
+
+if sys.version_info.major > 2:
+    PYC_MAGICK_SIZE = 4 * 4
+
+    import _imp as imp
+    def new_module(name):
+        return type(sys)(name)
+
+    EXTS_NATIVE = tuple(imp.extension_suffixes())
+
+else:
+    PYC_MAGICK_SIZE = 4 * 2
+
+    import imp
+    def new_module(name):
+        return imp.new_module(name)
+
+    EXTS_NATIVE = tuple(
+        sorted([
+            suffix for suffix, _, extype in imp.get_suffixes()
+            if extype == imp.C_EXTENSION
+            ], reverse=True
+        )
+    )
+
 
 os_ = None
 
@@ -90,14 +114,6 @@ config = {}
 
 try:
     import _pupy
-
-    # Reset search paths ASAP
-
-    del sys.meta_path[:]
-    del sys.path[:]
-    del sys.path_hooks[:]
-
-    sys.path_importer_cache.clear()
 
     from _pupy import (
         get_arch, is_shared
@@ -157,10 +173,10 @@ except ImportError:
 
 EXTS_SOURCES = ('.py',)
 EXTS_COMPILED = ('.pye', '.pyo', '.pyc')
-EXTS_NATIVE = ('.pyd', '.so', '.dll')
-EXTS_ALL = EXTS_NATIVE + EXTS_COMPILED + EXTS_SOURCES
+EXTS_NON_NATIVE = EXTS_COMPILED + EXTS_SOURCES
+EXTS_ALL = EXTS_NATIVE + EXTS_NON_NATIVE
 ANY_INIT = tuple(
-    '__init__' + ext for ext in EXTS_SOURCES + EXTS_COMPILED
+    '__init__' + ext for ext in EXTS_NON_NATIVE
 )
 
 MODULE_CLASS = sys.__class__
@@ -230,7 +246,7 @@ def get_logger(name):
 
 
 def set_stdio(null=False):
-    if os_:
+    if not null and os_:
         try:
             os_.fstat(sys.stdout.fileno())
             os_.fstat(sys.stderr.fileno())
@@ -343,11 +359,66 @@ def loadpy(src, dst, masked=False):
         raise
 
 
-def import_module(data, initname, fullname, path):
-    if not is_supported(_import_module):
-        return None
+def splitpyname(filename):
+    for ext in EXTS_ALL:
+        if filename.endswith(ext):
+            return filename[:-len(ext)]
 
-    return _import_module(data, initname, fullname, path)
+    return filename.rsplit('.', 1)[0]
+
+
+if sys.version_info.major > 2:
+    import _frozen_importlib
+
+    def import_module(fullname, loader):
+        if not is_supported(_import_module):
+            return None
+
+        spec = _frozen_importlib.ModuleSpec(
+            fullname, loader, origin=loader.path
+        )
+
+        module_name = fullname
+
+        if '.' in module_name:
+            module_name = module_name.rsplit('.', 1)[1]
+
+        initname = 'PyInit_' + module_name
+
+        module = _import_module(
+            loader.contents,
+            spec,
+            initname, fullname,
+            loader.path
+        )
+
+        # if not module:
+        #     raise ImportError('Failed to import ' + fullname + ' empty object')
+
+        # if fullname not in sys.modules:
+        #     loader._make_module(
+        #         fullname, module
+        #     )
+
+else:
+    def import_module(fullname, loader):
+        if not is_supported(_import_module):
+            return None
+
+        module_name = fullname
+
+        if '.' in module_name:
+            module_name = module_name.rsplit('.', 1)[1]
+
+        initname = 'init' + module_name
+
+        loader._make_module(
+            fullname,
+            _import_module(
+                loader.contents, None, initname,
+                fullname, loader.path
+            )
+        )
 
 
 def load_dll(name, buf=None):
@@ -403,12 +474,14 @@ def _get_module_files(fullname, path=None):
 
     files = [
         module for module in modules
-        if module.rsplit('.', 1)[0] == path or any([
+        if splitpyname(module) == path or any([
             (
                 path + '/__init__' + ext == module
-            ) for ext in EXTS_ALL
+            ) for ext in EXTS_NON_NATIVE
         ])
     ]
+
+    dprint("Search in modules: " + path + " -> ", str(files))
 
     return files
 
@@ -430,7 +503,7 @@ def get_module_files(fullname, paths=[None]):
 
 def make_module(fullname, path=None, is_pkg=False, mod=None):
     if mod is None:
-        mod = imp.new_module(fullname)
+        mod = new_module(fullname)
 
     mod.__name__ = str(fullname)
     mod.__file__ = str(
@@ -443,7 +516,7 @@ def make_module(fullname, path=None, is_pkg=False, mod=None):
         ]
         mod.__package__ = str(fullname)
     else:
-        mod.__package__ = str(fullname.rsplit('.', 1)[0])
+        mod.__package__ = str(splitpyname(fullname))
 
     original_module = sys.modules.get(fullname)
     if original_module:
@@ -535,7 +608,7 @@ class PupyPackageLoader(object):
                 try:
                     mod = self._make_module(fullname)
                     loadpy(
-                        self.contents[8:],
+                        self.contents[PYC_MAGICK_SIZE:],
                         mod.__dict__,
                         self.extension == 'pye'
                     )
@@ -549,15 +622,10 @@ class PupyPackageLoader(object):
                     raise ImportError(
                         'memimporter interface is not initialized yet')
 
-                initname = 'init' + fullname.rsplit('.', 1)[-1]
-
                 dprint('Load {} from native file {}'.format(
                     fullname, self.path))
 
-                self._make_module(
-                    fullname,
-                    import_module(self.contents, initname, fullname, self.path)
-                )
+                import_module(fullname, self)
 
             else:
                 raise ImportError('Unsupported extension {}'.format(
@@ -759,7 +827,18 @@ class PupyPackageFinder(object):
                 fullname, selected, len(content)
             )
 
-            extension = selected.rsplit(".", 1)[1].strip().lower()
+            extension = None
+            selected_nocase = selected.lower()
+
+            for supported_ext in EXTS_ALL:
+                if selected_nocase.endswith(supported_ext):
+                    extension = supported_ext[1:]
+                    break
+
+            if extension is None:
+                # Fallback
+                extension = selected.rsplit(".", 1)[1].strip().lower()
+
             is_pkg = any([
                 selected.endswith('/__init__'+ext) for ext in (
                     EXTS_COMPILED + EXTS_SOURCES
@@ -796,13 +875,20 @@ class PupyPackageFinder(object):
 def initialize_basic_windows_modules():
     dprint('Initialize basic windows modules')
     try:
-        if 'pywintypes27.dll' in modules:
-            dprint('Load pywintypes')
-            load_dll('pywintypes27.dll', modules['pywintypes27.dll'])
-            del modules['pywintypes27.dll']
+        wintypes_dll = 'pywintypes{}{}.dll'.format(
+            sys.version_info.major,
+            sys.version_info.minor
+        )
+
+        if wintypes_dll in modules:
+            dprint('Load pywintypes (%s)', wintypes_dll)
+            load_dll(wintypes_dll, modules[wintypes_dll])
+            del modules[wintypes_dll]
 
             dprint('Load pywin32 loader')
             import _win32sysloader  # noqa
+        else:
+            dprint('Pywintypes not found (%s)', wintypes_dll)
     except (NotImplementedError, WindowsError, ImportError) as e:
         dprint("Failed to load pywin32 loader: " + str(e))
         # We will try to leave without them..
@@ -826,17 +912,28 @@ def load_pupyimporter(stdlib=None):
     if stdlib:
         modules = stdlib
 
-    if is_native():
-        dprint('Install pupyimporter (standalone)')
-        sys.path = ['pupy://']
-        sys.path_hooks = [PupyPackageFinder]
+    if PupyPackageFinder not in sys.path_hooks:
+        if is_native():
+            dprint('Install pupyimporter (standalone)')
+            sys.path = ['pupy://']
+            sys.path_hooks = [PupyPackageFinder]
 
-    else:
-        dprint('Install pupyimporter + local packages')
-        sys.path.insert(0, 'pupy://')
-        sys.path_hooks.append(PupyPackageFinder)
+            sys.path_importer_cache.clear()
 
-    sys.path_importer_cache.clear()
+        else:
+            dprint(
+                'Install pupyimporter + local packages '
+                '(current: path={} hooks={})',
+                sys.path, sys.path_hooks
+            )
+
+            sys.path.insert(0, 'pupy://')
+            sys.path_hooks.append(PupyPackageFinder)
+
+    dprint(
+        "sys.path={}, sys.path_hooks={} sys.meta_path={}",
+        sys.path, sys.path_hooks, sys.meta_path
+    )
 
     PupyPackageFinder.init_search_lock()
 
@@ -844,7 +941,7 @@ def load_pupyimporter(stdlib=None):
         initialize_basic_windows_modules()
 
 
-def init_pupy(argv, stdlib, debug=False):
+def init_pupy(argv, stdlib, debug=False, setup_importer=True):
     global logger
     global pupy
     global modules
@@ -855,8 +952,9 @@ def init_pupy(argv, stdlib, debug=False):
     set_debug(debug)
 
     dprint(
-        'init_pupy: argv={} sys.argv={}',
-        repr(argv), repr(sys.argv)
+        'init_pupy: argv={} sys.argv={} stdlib={} native={}',
+        repr(argv), repr(sys.argv), len(stdlib) if stdlib else None,
+        is_native()
     )
 
     if sys.argv != argv:
@@ -866,7 +964,8 @@ def init_pupy(argv, stdlib, debug=False):
     if hasattr(sys.platform, 'addtarget'):
         sys.platform.addtarget(None)
 
-    load_pupyimporter(stdlib)
+    if setup_importer:
+        load_pupyimporter(stdlib)
 
     from .logger import create_root_logger, enable_debug_logger
     logger = create_root_logger()
@@ -945,13 +1044,16 @@ def setup_obtain():
     obtain = safe_obtain
 
 
-def prepare(argv=sys.argv, debug=False, config={}, stdlib=None):
+def prepare(
+    argv=sys.argv, debug=False, config={},
+        stdlib=None, setup_importer=True):
+
     set_pupy_config(config)
 
     if config.get('debug', False):
         debug = True
 
-    init_pupy(argv, stdlib, debug)
+    init_pupy(argv, stdlib, debug, setup_importer)
 
     dprint("Apply dl_hacks..")
 

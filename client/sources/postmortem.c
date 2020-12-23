@@ -715,11 +715,11 @@ void SaveExceptionInfo(
         "Registers:\n"
 
 #ifdef _WIN64
-        "RSP: %016x RBP: %016x RIP: %016x\n"
-        "RAX: %016x RBX: %016x RCX: %016x RDX: %016x\n"
-        "RSI: %016x RDI: %016x R8:  %016x R9:  %016x\n"
-        "R10: %016x R11: %016x R12: %016x R13: %016x\n"
-        "R14: %016x R15: %016x\n",
+        "RSP: %016llx RBP: %016llx RIP: %016llx\n"
+        "RAX: %016llx RBX: %016llx RCX: %016llx RDX: %016llx\n"
+        "RSI: %016llx RDI: %016llx R8:  %016llx R9:  %016llx\n"
+        "R10: %016llx R11: %016llx R12: %016llx R13: %016llx\n"
+        "R14: %016llx R15: %016llx\n",
 #else
         "ESP: %08x EBP: %08x EIP: %08x\n"
         "EAX: %08x EBX: %08x ECX: %08x EDX: %08x\n"

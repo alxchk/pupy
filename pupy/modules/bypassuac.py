@@ -101,7 +101,7 @@ class BypassUAC(PupyModule):
         )
 
         result = scanner(
-            uac=True, persist=False, elevate=False, execute=False
+            uac=True, persist=False, elevate=False
         ).start()
 
         return self.parse_result(result, print_result)

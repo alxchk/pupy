@@ -6,6 +6,8 @@
 
 #ifdef DEBUG
 
+#include <wchar.h>
+
 int dprint(const char *fmt, ...);
 int dwprint(const wchar_t *fmt, ...);
 

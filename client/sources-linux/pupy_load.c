@@ -23,7 +23,13 @@
 #include "revision.h"
 #include "ld_hooks.h"
 
-extern DL_EXPORT(void) init_pupy(void);
+#if PYMAJ > 2
+DL_EXPORT(PyObject*) PyInit__pupy(void);
+#define pupy_init PyInit__pupy
+#else
+DL_EXPORT(void) init_pupy(void);
+#define pupy_init init_pupy
+#endif
 
 #if defined(_FEATURE_PATHMAP) && defined(_LD_HOOKS_NAME)
 const char *__pathmap_callback(const char *path, char *buf, size_t buf_size);
@@ -73,12 +79,9 @@ uint32_t mainThread(int argc, char *argv[], bool so)
 #endif
 
     dprint("Initializing python...\n");
-    if (!initialize_python(argc, argv, so))
-    {
+    pupy_init_t init_ref = pupy_init;
+    if (!initialize_python(argc, argv, so, &init_ref))
         return -1;
-    }
-
-    init_pupy();
 
     dprint("Running pupy...\n");
     run_pupy();

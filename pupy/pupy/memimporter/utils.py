@@ -17,7 +17,25 @@ from imp import load_dynamic
 from os import path
 from tempfile import gettempdir
 
+import sys
 import pupy
+
+if sys.version_info.major > 2:
+    def load_dynamic(name, path, file=None):
+        import importlib.machinery
+        from importlib._bootstrap import _load
+
+        loader = importlib.machinery.ExtensionFileLoader(
+            name, path
+        )
+
+        # Issue #24748: Skip the sys.modules check in _load_module_shim;
+        # always load new extension
+        spec = importlib.machinery.ModuleSpec(
+            name=name, loader=loader, origin=path)
+
+        return _load(spec)
+
 
 INITIALIZER = ctypes.PYFUNCTYPE(None)
 _Py_PackageContext = None
@@ -104,11 +122,20 @@ def load_library_common(
     module_name = name.split('.', 1)[-1]
 
     if initfuncname is None:
-        initfuncname = 'init' + module_name
+        if sys.version_info.major > 2:
+            initfuncname = 'PyInit_' + module_name
+        else:
+            initfuncname = 'init' + module_name
 
     if _Py_PackageContext is None:
         # Fallback to built-in imp.load_dynamic
-        if initfuncname != 'init' + module_name:
+
+        if sys.version_info.major > 2:
+            correct = initfuncname == 'PyInit_' + module_name
+        else:
+            correct = initfuncname == 'init' + module_name
+
+        if not correct:
             raise ValueError('Unexpected module_name')
 
         x = load_dynamic(module_name, filepath)

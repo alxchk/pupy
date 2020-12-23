@@ -910,7 +910,7 @@ class PupyConnection(Connection):
 
         data = None
 
-        for async_event_id in self._async_callbacks.keys():
+        for async_event_id in list(self._async_callbacks):
             async_event = self._async_callbacks.get(async_event_id, None)
             if not async_event:
                 continue
@@ -1053,7 +1053,7 @@ class PupyConnection(Connection):
             if __debug__:
                 logger.debug('Dispatch(%s) - no data', self)
 
-        for async_event_id in self._async_callbacks.keys():
+        for async_event_id in list(self._async_callbacks):
             async_event = self._async_callbacks.get(async_event_id)
             if not async_event:
                 continue

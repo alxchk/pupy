@@ -18,7 +18,7 @@ import logging
 try:
     from .PupyLogger import getLogger
     logger = getLogger('compiler')
-except ValueError:
+except (ValueError, ImportError):
     # If PupyCompile imported directly (build_library_zip.py)
     logger = logging
 
@@ -28,10 +28,14 @@ if sys.version_info.major > 2:
     except ImportError:
         py2c = None
 
+    from _frozen_importlib_external import MAGIC_NUMBER
+    DEFAULT_MAGIC = MAGIC_NUMBER + (b'\x00' * 4 * 3)
+
     xrange = range
     unicode = str
 else:
     py2c = None
+    DEFAULT_MAGIC = b'\x00' * 8
 
 
 class Compiler(ast.NodeTransformer):
@@ -66,13 +70,16 @@ class Compiler(ast.NodeTransformer):
                     e.msg, source.split('\n')[e.lineno]
                 )
 
-    def compile(self, filename, obfuscate=False, raw=False, magic=b'\x00'*8):
+    def compile(self, filename, obfuscate=False, raw=False, magic=DEFAULT_MAGIC):
         if self._source_ast is None:
             return None
 
-        body = marshal.dumps(
-            compile(self.visit(self._source_ast), filename, 'exec')
-        )
+        try:
+            body = marshal.dumps(
+                compile(self.visit(self._source_ast), filename, 'exec')
+            )
+        except Exception as e:
+            raise ValueError('Compilation failed: {}: {}'.format(filename, e))
 
         if obfuscate:
             body_len = len(body)

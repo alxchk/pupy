@@ -21,19 +21,34 @@
     FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
     DEALINGS IN THE SOFTWARE.
 """
+
 from __future__ import print_function
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import unicode_literals
 
 
+import sys
+
+
+if sys.version_info.major > 2:
+    def lrange(x):
+        return list(range(x))
+
+    xrange = range
+
+else:
+    def lrange(x):
+        return range(x)
+
+
 def KSA(key):
     keylength = len(key)
 
-    S = range(256)
+    S = lrange(256)
 
     j = 0
-    for i in range(256):
+    for i in xrange(256):
         j = (j + S[i] + key[i % keylength]) % 256
         S[i], S[j] = S[j], S[i]  # swap
 
@@ -52,18 +67,32 @@ def PRGA(S):
         yield K
 
 
-class RC4(object):
-    __slots__ = ('prga',)
+if sys.version_info.major > 2:
+    class RC4(object):
+        __slots__ = ('prga',)
 
-    def __init__(self, key):
-        key = tuple(ord(x) for x in key)
-        self.prga = PRGA(KSA(key))
+        def __init__(self, key):
+            key = tuple(x for x in key)
+            self.prga = PRGA(KSA(key))
 
-    def encrypt(self, data):
-        return b''.join(chr(ord(x)^next(self.prga)) for x in data)
+        def encrypt(self, data):
+            return bytes(x^next(self.prga) for x in data)
 
-    def decrypt(self, data):
-        return b''.join(chr(ord(x)^next(self.prga)) for x in data)
+        def decrypt(self, data):
+            return bytes(x^next(self.prga) for x in data)
+else:
+    class RC4(object):
+        __slots__ = ('prga',)
+
+        def __init__(self, key):
+            key = tuple(ord(x) for x in key)
+            self.prga = PRGA(KSA(key))
+
+        def encrypt(self, data):
+            return b''.join(chr(ord(x)^next(self.prga)) for x in data)
+
+        def decrypt(self, data):
+            return b''.join(chr(ord(x)^next(self.prga)) for x in data)
 
 
 if __name__ == '__main__':

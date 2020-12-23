@@ -7,12 +7,15 @@
 #include <sys/types.h>
 #include <sys/mman.h>
 
-#define PYTHON_LIB_NAME "libpython2.7.so.1.0"
+#ifndef PYTHON_LIB_NAME
+#error PYTHON_LIB_NAME must be specified
+#endif
 
 #include "Python-dynload.h"
 
 #define FREE_HMODULE_AFTER_LOAD 1
 #define FILE_SYSTEM_ENCODING "utf-8"
+#define OS_PY_DL_EXT ".so"
 
 typedef void *HMODULE;
 typedef void *(*resolve_symbol_t)(HMODULE hModule, const char *name);
@@ -27,17 +30,22 @@ typedef void *(*resolve_symbol_t)(HMODULE hModule, const char *name);
         "libcrypto.so." OPENSSL_LIB_VERSION,  \
         libcrypto_c_start,                    \
         libcrypto_c_size,                     \
-        FALSE                                 \
+        FALSE,                                \
+        NULL                                  \
     }, {                                      \
         "libssl.so." OPENSSL_LIB_VERSION,     \
         libssl_c_start,                       \
         libssl_c_size,                        \
-        FALSE                                 \
+        FALSE,                                \
+        NULL                                  \
     }, {                                      \
-        PYTHON_LIB_NAME,                \
-        python27_c_start,                     \
-        python27_c_size,                      \
-        TRUE                                  \
+        PYTHON_LIB_NAME,                      \
+        python_c_start,                       \
+        python_c_size,                        \
+        TRUE,                                 \
+        NULL                                  \
+    } , {                                     \
+        NULL, NULL, NULL, NULL, NULL          \
     }                                         \
 }
 
@@ -46,7 +54,7 @@ typedef void *(*resolve_symbol_t)(HMODULE hModule, const char *name);
 
 #define OSLoadLibrary(name) dlopen(name, RTLD_NOW)
 #define OSResolveSymbol dlsym
-#define OSUnmapRegion munmap
+#define OSUnmapRegion(region, size) munmap((void *) region, size)
 #define MemLoadLibrary(name, bytes, size, arg) \
     memdlopen(name, bytes, size, RTLD_NOW | RTLD_GLOBAL)
 #define MemResolveSymbol dlsym
@@ -88,7 +96,7 @@ static const char *OSGetProgramName()
     return exe;
 }
 
-#include "python27.c"
+#include "python.c"
 #include "libcrypto.c"
 #include "libssl.c"
 #include "tmplibrary.h"

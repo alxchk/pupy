@@ -1889,11 +1889,6 @@ global_ref = None
 
 
 if not hasattr(Thread, '__impersonate_patch'):
-    setattr(
-        Thread, '__bootstrap_inner_original',
-        Thread._Thread__bootstrap_inner
-    )
-
     def __bootstrap_inner_patched(self):
         try:
             from pupwinutils.security import global_ref
@@ -1907,8 +1902,23 @@ if not hasattr(Thread, '__impersonate_patch'):
 
         self.__class__.__bootstrap_inner_original(self)
 
-    setattr(Thread, '_Thread__bootstrap_inner', __bootstrap_inner_patched)
-    setattr(Thread, '__impersonate_patch', True)
+    if hasattr(Thread, '_Thread__bootstrap_inner'):
+        setattr(
+            Thread, '__bootstrap_inner_original',
+            Thread._Thread__bootstrap_inner
+        )
+
+        setattr(Thread, '_Thread__bootstrap_inner', __bootstrap_inner_patched)
+        setattr(Thread, '__impersonate_patch', True)
+
+    elif hasattr(Thread, '_bootstrap_inner'):
+        setattr(
+            Thread, '__bootstrap_inner_original',
+            Thread._bootstrap_inner
+        )
+
+        setattr(Thread, '_bootstrap_inner', __bootstrap_inner_patched)
+        setattr(Thread, '__impersonate_patch', True)
 
 
 def impersonate_sid_long_handle(*args, **kwargs):

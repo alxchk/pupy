@@ -3,6 +3,9 @@
 *.pyo
 .#*
 
+**/.ccls-cache
+.vscode
+
 # Generated sources
 client/sources/import-tab.c
 client/sources/import-tab.h

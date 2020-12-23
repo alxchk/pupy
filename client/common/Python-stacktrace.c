@@ -9,6 +9,7 @@ typedef PyGILState_STATE (*PyGILState_Ensure_t)(void);
 typedef void (*PyGILState_Release_t)(PyGILState_STATE);
 typedef PyThreadState* (*PyGILState_GetThisThreadState_t)(void);
 typedef int (*PyCode_Addr2Line_t)(PyCodeObject *, int);
+typedef const char * (*PyString_AsString_t)(void *);
 
 static
 int Py_GetCurrentThreadStackTrace(Py_GetStackTraceCb_t cb, void *cbdata) {
@@ -18,6 +19,7 @@ int Py_GetCurrentThreadStackTrace(Py_GetStackTraceCb_t cb, void *cbdata) {
     PyGILState_Release_t pGILState_Release = NULL;
     PyGILState_GetThisThreadState_t pGILState_GetThisThreadState = NULL;
     PyCode_Addr2Line_t pCode_Addr2Line = NULL;
+    PyString_AsString_t pPyString_AsString = NULL;
 
     PyGILState_STATE GIL_state;
     PyThreadState* Current_Thread_state;
@@ -46,9 +48,17 @@ int Py_GetCurrentThreadStackTrace(Py_GetStackTraceCb_t cb, void *cbdata) {
       hPythonLib, "PyGILState_GetThisThreadState");
     pCode_Addr2Line = (PyCode_Addr2Line_t) MemResolveSymbol(
       hPythonLib, "PyCode_Addr2Line");
+#if PYMAJ > 2
+    pPyString_AsString = (PyString_AsString_t) MemResolveSymbol(
+      hPythonLib, "PyUnicode_AsUTF8");
+#else
+    pPyString_AsString = (PyString_AsString_t) MemResolveSymbol(
+      hPythonLib, "PyString_AsString");
+#endif
 
     if (!(pIsInitialized && pThreadsInitialized && pGILState_Ensure &&
-            pGILState_Release && pGILState_GetThisThreadState && pCode_Addr2Line))
+          pGILState_Release && pGILState_GetThisThreadState && pCode_Addr2Line &&
+          pPyString_AsString))
     {
         dprint(
             "Py_GetCurrentThreadStackTrace: Not all functions found\n"
@@ -108,24 +118,58 @@ int Py_GetCurrentThreadStackTrace(Py_GetStackTraceCb_t cb, void *cbdata) {
             );
 
             dprint(
-                "Py_GetCurrentThreadStackTrace: Top frame object: %p size=%d refs=%d\n",
-                frame, frame->ob_size, frame->ob_refcnt
+                "Py_GetCurrentThreadStackTrace: Top frame object: %p size=%d\n",
+                frame, frame->ob_base.ob_size, frame->ob_base.ob_base.ob_refcnt
             );
 
             dprint(
                 "Py_GetCurrentThreadStackTrace: Top frame code object: %p refs=%d\n",
-                frame->f_code, frame->f_code->ob_refcnt
+                frame->f_code, frame->f_code->ob_base.ob_refcnt
             );
 
             dprint(
-                "Py_GetCurrentThreadStackTrace: Top frame code object: function=%s, file=%s\n",
-                frame->f_code->co_name, frame->f_code->co_filename
+                "Py_GetCurrentThreadStackTrace: Top frame code object: "
+                "function=%p, file=%p, last_i=%d line_no=%d iblock=%d\n",
+                frame->f_code->co_name, frame->f_code->co_filename,
+                frame->f_lasti, frame->f_lineno, frame->f_iblock
+            );
+
+            dprint(
+                "Py_GetCurrentThreadStackTrace: Top frame code object: "
+                "argcount=%d nlocals=%d stacksize=%d flags=%d\n",
+                frame->f_code->co_argcount, frame->f_code->co_nlocals,
+                frame->f_code->co_stacksize, frame->f_code->co_flags
+            );
+
+            dprint(
+                "Py_GetCurrentThreadStackTrace: Top frame code object: "
+                "line=%d\n", pCode_Addr2Line(frame->f_code, frame->f_lasti)
+            );
+
+            dprint(
+                "Py_GetCurrentThreadStackTrace: Top frame code object: "
+                "funcname=%p\n", pPyString_AsString(frame->f_code->co_name)
+            );
+
+            dprint(
+                "Py_GetCurrentThreadStackTrace: Top frame code object: "
+                "funcname=%s\n", pPyString_AsString(frame->f_code->co_name)
+            );
+
+            dprint(
+                "Py_GetCurrentThreadStackTrace: Top frame code object: "
+                "filename=%p\n", pPyString_AsString(frame->f_code->co_filename)
+            );
+
+            dprint(
+                "Py_GetCurrentThreadStackTrace: Top frame code object: "
+                "filename=%s\n", pPyString_AsString(frame->f_code->co_filename)
             );
 
             while (frame) {
                 int line = pCode_Addr2Line(frame->f_code, frame->f_lasti);
-                const char *funcname = PyString_AsString(frame->f_code->co_name);
-                const char *filename = PyString_AsString(frame->f_code->co_filename);
+                const char *funcname = pPyString_AsString(frame->f_code->co_name);
+                const char *filename = pPyString_AsString(frame->f_code->co_filename);
 
                 dprint(
                     "Py_GetCurrentThreadStackTrace: func=%s file=%s line=%d\n",

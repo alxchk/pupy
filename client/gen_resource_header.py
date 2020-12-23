@@ -88,19 +88,24 @@ if __name__ == "__main__":
         h_file += "static const size_t %s_loader = 0x%x;\n" % (
             output, reflective_loader)
 
-        with open(sys.argv[2].rsplit('.', 1)[0] + '.loader', 'w') as w:
+        with open(sys.argv[2].rsplit('.', 1)[0] + '.loader', 'w+b') as w:
             w.write(struct.pack('>I', reflective_loader))
 
     h_file += "static const int %s_size = %s;" % (output, len(payload))
     h_file += attribute
     h_file += "\nstatic const char %s_start[] = {\n" % (output)
+
     current_size = 0
 
     with open(sys.argv[2], 'w') as w:
         w.write(h_file)
 
         for c in payload:
-            w.write("'\\x%s'," % binascii.hexlify(c))
+            if isinstance(c, int):
+                w.write("'\\x%02x'," % (c))
+            else:
+                w.write("'\\x%s'," % binascii.hexlify(c))
+
             current_size += 1
             if current_size > MAX_CHAR_PER_LINE:
                 current_size = 0

@@ -18,13 +18,13 @@
 #endif
 
 #ifdef _PUPY_DYNLOAD
-#ifdef DEBUG
-#include "_pupy_debug_pyd.c"
-#define _pupy_pyd_c_start _pupy_debug_pyd_c_start
-#define _pupy_pyd_c_size _pupy_debug_pyd_c_size
-#else
-#include "_pupy_pyd.c"
+_pupy_pyd_args_t pupyDynArgs;
 #endif
+
+#if PYMAJ > 2
+PyObject* PyInit__pupy(void);
+#else
+void init_pupy(void);
 #endif
 
 #define WINDOW_CLASS_NAME "DummyWindowClass"
@@ -226,10 +226,6 @@ void initialize(BOOL isDll) {
     int i, argc = 0;
     char **argv = NULL;
 
-#ifdef _PUPY_DYNLOAD
-    _pupy_pyd_args_t args;
-#endif
-
 #ifdef _PUPY_PRIVATE_NT
     HMODULE hNtDll = GetModuleHandleA("NTDLL.DLL");
     HMODULE hKernelBase = GetModuleHandleA("KERNELBASE.DLL");
@@ -313,10 +309,19 @@ void initialize(BOOL isDll) {
         dprint("ARGV: %d: %s\n", i, argv[i]);
     }
 
+#ifndef _PUPY_DYNLOAD
     dprint("Initializing python...\n");
-    if (!initialize_python(argc, argv, isDll)) {
+    if (!initialize_python(
+            argc, argv, isDll,
+#if PYMAJ > 2
+            PyInit__pupy
+#else
+            pupy_init
+#endif
+        )) {
         return;
     }
+#endif
 
     {
         DWORD dwOldErrorMode = SetErrorMode(
@@ -334,32 +339,6 @@ void initialize(BOOL isDll) {
 
     _set_abort_behavior(0, _WRITE_ABORT_MSG);
 
-    {
-        HMODULE hMSVCR90 = MyGetModuleHandleA("MSVCR90");
-        if (hMSVCR90) {
-            __p_set_abort_behavior_t __p_set_abort_behavior = (__p_set_abort_behavior_t)
-                MyGetProcAddress(hMSVCR90, "_set_abort_behavior");
-
-            signal_t __p_signal = (signal_t) MyGetProcAddress(hMSVCR90, "signal");
-
-            if (__p_set_abort_behavior) {
-                __p_set_abort_behavior(0, _WRITE_ABORT_MSG);
-                dprint("_set_abort_behavior/MSVCR90 - default abort() handlers removed\n");
-            } else {
-                dprint("_set_abort_behavior/MSVCR90 - _set_abort_behavior was not found\n");
-            }
-
-            if (__p_signal) {
-                __p_signal(SIGABRT, OnAbortHandler);
-                dprint("signal/MSVCR90 - set sigabrt handler\n");
-            } else {
-                dprint("signal/MSVCR90 - signal was not found\n");
-            }
-        } else {
-            dprint("_set_abort_behavior/MSVCR90 - DLL was not loaded\n");
-        }
-    }
-
 #ifdef POSTMORTEM
     EnableCrashingOnCrashes();
 
@@ -375,30 +354,51 @@ void initialize(BOOL isDll) {
 #ifdef _PUPY_DYNLOAD
     dprint("_pupy built with dynload\n");
 
-    args.pvMemoryLibraries = MyGetLibraries();
-    args.cbExit = NULL;
-    args.blInitialized = FALSE;
+    pupyDynArgs.pvMemoryLibraries = MyGetLibraries();
+    pupyDynArgs.cbExit = NULL;
+    pupyDynArgs.blInitialized = FALSE;
 
-    dprint("Load _pupy\n");
-    xz_dynload(
-        "_pupy.pyd",
-        _pupy_pyd_c_start, _pupy_pyd_c_size,
-        &args
-    );
+    dprint("Initializing python...\n");
+    if (!initialize_python(argc, argv, isDll, &pupyDynArgs.pInit)) {
+        return;
+    }
 
-    if (args.blInitialized != TRUE) {
+    if (pupyDynArgs.blInitialized != TRUE) {
         dprint("_pupy.pyd initialization failed\n");
         return;
     }
 
-    dprint("cbExit: %p\n", args.cbExit);
-    dprint("pvMemoryLibraries: %p\n", args.pvMemoryLibraries);
+    dprint("cbExit: %p\n", pupyDynArgs.cbExit);
+    dprint("pvMemoryLibraries: %p\n", pupyDynArgs.pvMemoryLibraries);
 
-    on_exit_session_cb = args.cbExit;
-
-#else
-    init_pupy();
+    on_exit_session_cb = pupyDynArgs.cbExit;
 #endif
+
+    {
+        HMODULE hCRT = MyGetModuleHandleA(VCRUNTIME);
+        if (hCRT) {
+            __p_set_abort_behavior_t __p_set_abort_behavior = (__p_set_abort_behavior_t)
+                MyGetProcAddress(hCRT, "_set_abort_behavior");
+
+            signal_t __p_signal = (signal_t) MyGetProcAddress(hCRT, "signal");
+
+            if (__p_set_abort_behavior) {
+                __p_set_abort_behavior(0, _WRITE_ABORT_MSG);
+                dprint("_set_abort_behavior/" VCRUNTIME " - default abort() handlers removed\n");
+            } else {
+                dprint("_set_abort_behavior/" VCRUNTIME " - _set_abort_behavior was not found\n");
+            }
+
+            if (__p_signal) {
+                __p_signal(SIGABRT, OnAbortHandler);
+                dprint("signal/" VCRUNTIME " - set sigabrt handler\n");
+            } else {
+                dprint("signal/" VCRUNTIME " - signal was not found\n");
+            }
+        } else {
+            dprint("_set_abort_behavior/" VCRUNTIME " - DLL was not loaded\n");
+        }
+    }
 
     return;
 }
