@@ -188,7 +188,6 @@ def _dump_float(obj, stream, version):
 def _dump_complex(obj, stream, version):
     stream.append(TAG_COMPLEX + C16.pack(obj.real, obj.imag))
 
-
 if is_py3k:
     @register(_dump_registry, bytes)
     def _dump_bytes(obj, stream, version):
@@ -209,6 +208,14 @@ if is_py3k:
         else:
             stream.append(TAG_STR_L4 + I4.pack(obj_len))
             stream.append(obj)
+
+    @register(_dump_registry, bytearray)
+    def _dump_bytearray(obj, stream, version):
+        _dump_bytes(obj, stream, version)
+
+    @register(_dump_registry, memoryview)
+    def _dump_bytearray(obj, stream, version):
+        _dump_bytes(obj, stream, version)
 
     @register(_dump_registry, str)
     def _dump_str(obj, stream, version):
@@ -253,6 +260,14 @@ else:
         else:
             stream.append(TAG_STR_L4 + I4.pack(obj_len))
             stream.append(obj)
+
+    @register(_dump_registry, bytearray)
+    def _dump_bytearray(obj, stream, version):
+        _dump_str(obj, stream, version)
+
+    @register(_dump_registry, memoryview)
+    def _dump_bytearray(obj, stream, version):
+        _dump_str(obj, stream, version)
 
     @register(_dump_registry, unicode)
     def _dump_unicode(obj, stream, version):
@@ -580,12 +595,12 @@ def load(data, version=0):
 if is_py3k:
     simple_types = frozenset([
         type(None), int, bool, float, bytes, str, complex,
-        type(NotImplemented), type(Ellipsis)
+        type(NotImplemented), type(Ellipsis), bytearray, memoryview
     ])
 else:
     simple_types = frozenset([
         type(None), int, long, bool, float, str, unicode, complex,
-        type(NotImplemented), type(Ellipsis)
+        type(NotImplemented), type(Ellipsis), bytearray, memoryview
     ])
 
 
