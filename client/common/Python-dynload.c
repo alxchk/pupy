@@ -25,8 +25,6 @@ static char __config__[262144] = "####---PUPY_CONFIG_COMES_HERE---####\n";
 
 static PyGILState_STATE restore_state;
 
-static BOOL is_initialized = FALSE;
-
 #if PYMAJ > 2
 static wchar_t *program = NULL;
 #define MAGIC_SIZE (4 * 4)
@@ -102,10 +100,6 @@ BOOL initialize_python(int argc, char *argv[], BOOL is_shared_object, pupy_init_
 #endif
 
     int i;
-
-    if (is_initialized) {
-        return TRUE;
-    }
 
 #ifdef DEBUG_USE_OS_PYTHON
     hPython = OSLoadLibrary(PYTHON_LIB_NAME);
@@ -224,7 +218,11 @@ BOOL initialize_python(int argc, char *argv[], BOOL is_shared_object, pupy_init_
 
         dprint("Initialize python\n");
         Py_InitializeEx(is_shared_object? 0 : 1);
-        dprint("Initialized\n");
+
+        if (Py_IsInitialized())
+            dprint("Python Initialized\n");
+        else
+            dprint("Python NOT Initialized\n");
     }
 
     restore_state = PyGILState_Ensure();
@@ -270,7 +268,7 @@ BOOL initialize_python(int argc, char *argv[], BOOL is_shared_object, pupy_init_
 
     setup_jvm_class();
 
-    dprint("Python initialized\n");
+    dprint("Python prepared\n");
 
     return TRUE;
 
