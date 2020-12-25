@@ -28,7 +28,7 @@ class MemoryDuplicate(PupyModule):
         Duplicate the current pupy payload by executing it from memory
     """
 
-    qa = QA_DANGEROUS
+    # qa = QA_DANGEROUS
 
     interactive = 1
     dependencies = {
