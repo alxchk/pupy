@@ -17,14 +17,22 @@
 #include "postmortem.c"
 #endif
 
-#ifdef _PUPY_DYNLOAD
-_pupy_pyd_args_t pupyDynArgs;
-#endif
-
 #if PYMAJ > 2
 PyObject* PyInit__pupy(void);
 #else
 void init_pupy(void);
+#endif
+
+#ifdef _PUPY_DYNLOAD
+_pupy_pyd_args_t pupyDynArgs;
+#else
+static pupy_init_t pInit =
+#if PYMAJ > 2
+        PyInit__pupy
+#else
+        pupy_init
+#endif
+        ;
 #endif
 
 #define WINDOW_CLASS_NAME "DummyWindowClass"
@@ -309,20 +317,6 @@ void initialize(BOOL isDll) {
         dprint("ARGV: %d: %s\n", i, argv[i]);
     }
 
-#ifndef _PUPY_DYNLOAD
-    dprint("Initializing python...\n");
-    if (!initialize_python(
-            argc, argv, isDll,
-#if PYMAJ > 2
-            PyInit__pupy
-#else
-            pupy_init
-#endif
-        )) {
-        return;
-    }
-#endif
-
     {
         DWORD dwOldErrorMode = SetErrorMode(
             SEM_FAILCRITICALERRORS |
@@ -340,6 +334,7 @@ void initialize(BOOL isDll) {
     _set_abort_behavior(0, _WRITE_ABORT_MSG);
 
 #ifdef POSTMORTEM
+    dprint("Enable postmortem on crashes\n");
     EnableCrashingOnCrashes();
 
     if (isDll) {
@@ -372,6 +367,13 @@ void initialize(BOOL isDll) {
     dprint("pvMemoryLibraries: %p\n", pupyDynArgs.pvMemoryLibraries);
 
     on_exit_session_cb = pupyDynArgs.cbExit;
+#else
+    dprint("Initializing python...\n");
+
+    if (!initialize_python(argc, argv, isDll, &pInit)) {
+        return;
+    }
+    dprint("Python initialized...\n");
 #endif
 
     {
