@@ -121,6 +121,10 @@ def invalidate_module(name):
             del pupy.modules[item]
 
     for item in list(sys.modules):
+        # It's a mess..
+        if item.startswith(('pywintypes', 'pythoncom')):
+            continue
+
         if not (item == name or item.startswith(name+'.')):
             continue
 
