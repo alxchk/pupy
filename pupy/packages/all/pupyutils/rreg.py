@@ -27,8 +27,9 @@ from network.lib.convcompat import as_unicode_string
 if sys.version_info.major > 2:
     unicode = str
     basestring = str
-    long = int
-
+    numbers = int
+else:
+    numbers = (long, int)
 
 ERROR_SUCCESS = 0
 ERROR_MORE_DATA = 234
@@ -423,7 +424,7 @@ def __search(
             if ignorecase:
                 value = value.lower()
             return u_term in value
-        elif isinstance(value, (int, long)):
+        elif isinstance(value, numbers):
             if i_term is None:
                 return False
             return i_term == value
@@ -445,7 +446,7 @@ def __search(
             if ignorecase:
                 value = value.lower()
             return u_term == value
-        elif isinstance(value, (int, long)):
+        elif isinstance(value, numbers):
             if i_term is None:
                 return False
             return i_term == value
@@ -662,7 +663,7 @@ def set(
             try:
                 old_value = k[name]
                 if old_value.type in (REG_DWORD, REG_DWORD_LITTLE_ENDIAN):
-                    if not isinstance(value, (int, long)):
+                    if not isinstance(value, numbers):
                         value = int(value)
             except KeyError:
                 pass
