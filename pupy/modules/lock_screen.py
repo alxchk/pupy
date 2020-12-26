@@ -7,13 +7,14 @@ from __future__ import unicode_literals
 
 from pupylib.PupyModule import config, PupyModule, PupyArgumentParser
 
-import subprocess
+__class_name__ = 'PupyMod'
 
-__class_name__="PupyMod"
 
 @config(compat=["windows", "darwin"], cat="manage", tags=["lock", "screen", "session"])
 class PupyMod(PupyModule):
     """ Lock the session """
+
+    dependencies = ['lockscreen']
 
     @classmethod
     def init_argparse(cls):
@@ -21,14 +22,9 @@ class PupyMod(PupyModule):
 
     def run(self, args):
         ok = False
-        if self.client.is_windows():
-            ok = self.client.conn.modules['ctypes'].windll.user32.LockWorkStation()
-        elif self.client.is_darwin():
-            ok = self.client.conn.modules.subprocess.Popen(
-                '/System/Library/CoreServices/Menu Extras/User.menu/Contents/Resources/CGSession -suspend',
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.PIPE, shell=True)
 
-        if ok:
-            self.success("windows locked")
+        lock = self.client.remote('lockscreen', 'lock')
+        if lock():
+            self.success('Locked')
         else:
-            self.error("couldn't lock the screen")
+            self.error('Failed to lock')
