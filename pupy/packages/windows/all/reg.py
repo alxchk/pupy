@@ -36,6 +36,9 @@ from network.lib.convcompat import (
 if sys.version_info.major > 2:
     basestring = str
     unicode = str
+    numbers = int
+else:
+    numbers = (int, long)
 
 
 class FILETIME(Structure):
@@ -497,6 +500,8 @@ class KeyIter(object):
                 self.is_value = True
                 return next(self)
 
+    __next__ = next
+
 
 class Value(object):
     __slots__ = ('parent', 'name', 'value', 'type')
@@ -648,7 +653,10 @@ class Key(object):
         handle = self._open_key(
             KEY_QUERY_VALUE | KEY_ENUMERATE_SUB_KEYS)
 
-        iterator = KeyIter(self.arg, self.key, self.sub, handle)
+        iterator = KeyIter(
+            self.arg, self.key, self.sub, handle
+        )
+
         try:
             while True:
                 try:
@@ -735,7 +743,7 @@ def _search(
             if ignorecase:
                 value = value.lower()
             return u_term in value
-        elif isinstance(value, (int, long)):
+        elif isinstance(value, numbers):
             if i_term is None:
                 return False
             return i_term == value
@@ -757,7 +765,7 @@ def _search(
             if ignorecase:
                 value = value.lower()
             return u_term == value
-        elif isinstance(value, (int, long)):
+        elif isinstance(value, numbers):
             if i_term is None:
                 return False
             return i_term == value
@@ -919,7 +927,7 @@ def set(path, name, value, create):
         try:
             old_value = k[name]
             if old_value.type in (REG_DWORD, REG_DWORD_LITTLE_ENDIAN):
-                if not isinstance(value, (int, long)):
+                if not isinstance(value, numbers):
                     value = int(value)
         except KeyError:
             pass

@@ -10,6 +10,7 @@ __class_name__ = 'reg'
 import sys
 
 from threading import Event
+from binascii import hexlify
 
 from pupylib.PupyModule import config, PupyModule, PupyArgumentParser
 from pupylib.PupyOutput import (
@@ -162,6 +163,8 @@ class reg(PupyModule):
         search.add_argument('term', help='Term to search')
         search.set_defaults(func=cls.search)
 
+        cls.arg_parser.set_defaults(func=cls.ls)
+
     def __init__(self, *args, **kwargs):
         super(reg, self).__init__(*args, **kwargs)
         self.interrupt_cb = None
@@ -238,7 +241,7 @@ class reg(PupyModule):
             name = as_unicode_string(name, fail='convert')
 
             if ktype == 'BINARY':
-                value = 'hex:' + value.encode('hex')
+                value = 'hex:' + as_unicode_string(hexlify(value))
             else:
                 value = as_unicode_string(value, fail='convert')
 
@@ -270,14 +273,19 @@ class reg(PupyModule):
 
     def ls(self, args):
         ls = self._method('enum', args)
-        result = ls(args.key)
+
+        # Handle case with default arg (py3)
+        key = getattr(args, 'key', None)
+        wide = getattr(args, 'wide', False)
+
+        result = ls(key)
 
         if result is None:
             self.error('No such key')
             return
 
         try:
-            self._format_multi(result, wide=args.wide, remove=args.key)
+            self._format_multi(result, wide=wide, remove=key)
         except:
             import traceback
             traceback.print_exc()
