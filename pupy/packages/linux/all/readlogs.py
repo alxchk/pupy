@@ -252,6 +252,8 @@ class SDJournalIterator(object):
 
         return records
 
+    __next__ = next
+
 
 class SDJournalException(Exception):
     pass
