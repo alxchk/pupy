@@ -38,7 +38,7 @@ class PowershellManager(PupyModule):
         load = commands.add_parser('load', help='Create new powershell context or load more scripts into existing')
         load.add_argument('-F', '--force', action='store_true', default=False, help='Destroy old context if exists')
         load.add_argument('-64', '--try-64', action='store_true', default=False, help='Try amd64 if possible')
-        load.add_argument('-2', '--try-v2', action='store_true', default=None, help='Try version 2 if possible')
+        load.add_argument('-2', '--try-v2', action='store_true', default=False, help='Try version 2 if possible')
         load.add_argument('-W', '--width', default=-1, type=int, help='Set output line width')
         load.add_argument('-D', '--daemon', action='store_true', default=False, help='Start in "daemon" mode')
         load.add_argument('context', help='Context name')
@@ -71,7 +71,14 @@ class PowershellManager(PupyModule):
     def run(self, args):
         loaded = self.client.remote('powershell', 'loaded')
 
-        if args.name == 'loaded':
+        if not hasattr(args, 'name'):
+            contexts = loaded()
+            for context in contexts:
+                self.success('{}'.format(context))
+
+            return
+
+        elif args.name == 'loaded':
             if args.context:
                 if loaded(args.context):
                     self.success('{} is loaded'.format(args.context))

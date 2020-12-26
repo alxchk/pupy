@@ -118,7 +118,7 @@ class Request(object):
 
 
 class Powershell(threading.Thread):
-    def __init__(self, host, name, content, try_x64=False, daemon=False, width=None, v2=True):
+    def __init__(self, host, name, content, try_x64=False, daemon=False, width=None, v2=False):
         super(Powershell, self).__init__()
         self.daemon = True
 
@@ -126,7 +126,7 @@ class Powershell(threading.Thread):
         self._completed = threading.Event()
         self._initialized = False
         self._pipe = None
-        self._executable = u'powershell.exe'
+        self._executable = 'powershell.exe'
         self._queue = None
         self._name = name
         self._host = host
@@ -137,12 +137,12 @@ class Powershell(threading.Thread):
         self._v2 = v2
 
         if try_x64:
-            native = ur'C:\Windows\SysNative\WindowsPowershell\v1.0\powershell.exe'
+            native = r'C:\Windows\SysNative\WindowsPowershell\v1.0\powershell.exe'
             if os.path.exists(native):
                 self._executable = native
 
         self._args = [
-            self._executable, u'-W', u'hidden', u'-NoProfile', u'-NoLogo', u'-I', u'Text', u'-C', u'-'
+            self._executable, '-W', 'hidden', '-NoProfile', '-NoLogo', '-I', 'Text', '-C', '-'
         ]
 
         self._initialize(content)
@@ -157,39 +157,56 @@ class Powershell(threading.Thread):
 
         if self._v2:
             args = [
-                self._args[0], u'-v', u'2',
+                self._args[0], '-v', '2',
             ] + self._args[1:]
         else:
             args = self._args
 
+        kwargs = {
+            'stdout': subprocess.PIPE,
+            'stderr': subprocess.STDOUT,
+            'stdin': subprocess.PIPE,
+            'bufsize': 0
+        }
+
+        if sys.version_info.major > 2:
+            kwargs['text'] = False
+
         self._pipe = subprocess.Popen(
-            args, bufsize=0, universal_newlines=True,
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.PIPE,
+            args, **kwargs
         )
 
         preamble_complete = self._random()
 
-        request = '\n'.join([
-            '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8',
-            '$OutputEncoding = [Console]::OutputEncoding',
-            'Write-Host {}'.format(preamble_complete)
-        ]) + '\n'
+        request = b'\r\n'.join([
+            b'[Console]::OutputEncoding = [System.Text.Encoding]::UTF8',
+            b'$OutputEncoding = [Console]::OutputEncoding',
+            b'Write-Host ' + preamble_complete,
+            b''
+        ])
 
         self._pipe.stdin.write(request)
         self._pipe.stdin.flush()
 
-        print("WAITING FOR ", preamble_complete)
         data = self._pipe.stdout.readline()
 
-        if 'Version v2.0.50727 of the .NET Framework is not installed'.encode('UTF-16LE') in data:
+        if 'Version v2.0.50727 of the .NET Framework ' \
+                'is not installed'.encode('UTF-16LE') in data:
             self.stop()
             raise PowershellV2NotInstalled()
 
         elif not data or preamble_complete not in data:
-            print("First line: ", repr(data))
-            print('.NET Framework is not installed' in data)
             self.stop()
-            raise PowershellInitializationFailed()
+
+            if not data:
+                if self._pipe.poll():
+                    raise PowershellInitializationFailed(
+                        'Terminated: {}'.format(self._pipe.poll()))
+                else:
+                    raise PowershellInitializationFailed(
+                        'Terminated: {}'.format(self._pipe.poll()))
+
+            raise PowershellInitializationFailed(data.decode('utf-16le', 'ignore'))
 
         if not content:
             return
@@ -210,33 +227,43 @@ class Powershell(threading.Thread):
         var = self._random()
         tmp = self._random()
 
-        self._pipe.stdin.write('${}=""\n'.format(var))
+        self._pipe.stdin.write(
+            b''.join([
+                b'$', var,
+                b'=""\r\n'
+            ])
+        )
         part = 20000
-        encoded = base64.b64encode(content)
+
+        encoded = base64.b64encode(content.encode('utf-8'))
 
         for portion in [encoded[i:i+part] for i in range(0, len(encoded), part)]:
-            self._pipe.stdin.write('${}+="{}"\n'.format(var, portion))
+            self._pipe.stdin.write(b'$')
+            self._pipe.stdin.write(var)
+            self._pipe.stdin.write(b'+="')
+            self._pipe.stdin.write(portion)
+            self._pipe.stdin.write(b'"\r\n')
 
-        request ='${tmp}=[System.Text.Encoding]::UTF8.GetString(' \
+        request = '${tmp}=[System.Text.Encoding]::UTF8.GetString(' \
           '[System.Convert]::FromBase64String(${var}));' \
           '{dest}Invoke-Expression ${tmp}{pipe};' \
-          ' Remove-Variable {var}; Remove-Variable {tmp}\n'
+          ' Remove-Variable {var}; Remove-Variable {tmp}\r\n'
 
         if dest:
             pipe = '{}Format-Table -Property * -AutoSize | Out-String -Width {}'.format(
-                '{} |'.format(pipe) if pipe else '',
+                '{} |'.format(pipe.decode('ascii')) if pipe else '',
                 self._width
             )
 
         request = request.format(
-            tmp=tmp, var=var,
-            dest='${}='.format(dest) if dest else '',
+            tmp=tmp.decode('ascii'), var=var.decode('ascii'),
+            dest='${}='.format(dest.decode('ascii')) if dest else '',
             pipe='| {}'.format(pipe) if pipe else ''
         )
 
-        self._pipe.stdin.write(request)
+        self._pipe.stdin.write(request.encode('utf-8'))
         self._pipe.stdin.flush()
-
+        return result
 
     def run(self):
         request = self._queue.get()
@@ -246,7 +273,7 @@ class Powershell(threading.Thread):
             while self._pipe:
                 try:
                     data = self._pipe.stdout.readline()
-                    request.result = data
+                    request.result = data.decode('utf-8')
 
                     if not data:
                         break
@@ -265,41 +292,47 @@ class Powershell(threading.Thread):
     def _random(self):
         return ''.join(
             random.choice(string.ascii_uppercase + string.digits) for _ in range(32)
-        )
+        ).encode('ascii')
 
     def _execute(self, expression):
         if self._daemon:
             if not expression.endswith('\n'):
-                expression = expression + '\n'
+                expression = expression + '\r\n'
 
             self._invoke_expression(expression)
             return
 
         SOL = self._random()
-        EOL = ' ' + self._random()
+        EOL = b' ' + self._random()
+        EOL_N = EOL + b'\n'
         res = self._random()
 
         self._invoke_expression(expression, res)
-        self._pipe.stdin.write(
-            'Write-Host "{SOL}${res}{EOL}"; Remove-Variable {res}\n'.format(
-                SOL=SOL, res=res, EOL=EOL
-            )
-        )
+        self._pipe.stdin.write(b'Write-Host "')
+        self._pipe.stdin.write(SOL)
+        self._pipe.stdin.write(b'$')
+        self._pipe.stdin.write(res)
+        self._pipe.stdin.write(EOL)
+        self._pipe.stdin.write(b'"; Remove-Variable ')
+        self._pipe.stdin.write(res)
+        self._pipe.stdin.write(b'\r\n')
         self._pipe.stdin.flush()
 
-        response = ''
+        response = b''
 
-        while not response.endswith(EOL+'\n'):
+        while not response.endswith(EOL_N):
             data = self._pipe.stdout.readline()
             if not data:
                 break
 
-            response += data.replace('\r\n', '\n')
+            response += data.replace(b'\r\n', b'\n')
 
         sol_at = response.find(SOL)
+        end_at = response.find(EOL, sol_at)
+
         return response[
-            sol_at+len(SOL):-(len(EOL)+1)
-        ].strip(), response[:sol_at]
+            sol_at+len(SOL):end_at
+        ].decode('utf-8').strip(), response[:sol_at].decode('utf-8')
 
     def execute(self, expression, nowait=False, timeout=None, wait=None):
         if self._daemon:
@@ -352,7 +385,7 @@ class Powershell(threading.Thread):
             return True
 
         try:
-            self._pipe.stdin.write('exit\n')
+            self._pipe.stdin.write(b'exit\n')
             self._pipe.stdin.flush()
         except:
             pass
@@ -478,7 +511,8 @@ def loaded(name=None):
     return powershell.registered(name)
 
 
-def load(name, content, force=False, try_x64=False, daemon=False, width=None, v2=None):
+def load(name, content, force=False, try_x64=False,
+         daemon=False, width=None, v2=None):
     powershell = pupy.manager.get(PowerHost) or \
       pupy.manager.create(PowerHost)
 
@@ -499,7 +533,9 @@ def unload(name):
     powershell.unregister(name)
 
 
-def call(name, expression, nowait=False, timeout=None, content=None, try_x64=False):
+def call(name, expression, nowait=False, timeout=None,
+         content=None, try_x64=False):
+
     powershell = pupy.manager.get(PowerHost) or \
       pupy.manager.create(PowerHost)
 
