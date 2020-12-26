@@ -452,7 +452,8 @@ def table_as_bytes(diclist, wl=[], bl=[], truncate=None, legend=True):
         lines = []
         for key, _ in keys:
             value = deep_as_bytes(c.get(key, '').strip())
-            lines.append(value.ljust(colsize[key]+2 + non_symbol_len(value)))
+            pad = colsize[key] + 2 - symbol_len(value)
+            lines.append(value + (b' '*pad))
 
         res.append(b''.join(lines))
 
