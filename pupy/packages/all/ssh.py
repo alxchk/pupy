@@ -95,9 +95,15 @@ if Ed25519Key:
 
 
 try:
-    from _winreg import (
-        OpenKey, CloseKey, EnumKey, EnumValue, HKEY_USERS
-    )
+    if version_info.major > 2:
+        from winreg import (
+            OpenKey, CloseKey, EnumKey, EnumValue, HKEY_USERS
+        )
+    else:
+        from _winreg import (
+            OpenKey, CloseKey, EnumKey, EnumValue, HKEY_USERS
+        )
+
     from ctypes import (
         WinDLL, POINTER, byref, GetLastError,
         create_unicode_buffer, c_void_p

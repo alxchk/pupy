@@ -2,15 +2,27 @@ from __future__ import print_function
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import unicode_literals
-from _winreg import (
-    ConnectRegistry, OpenKey, SetValueEx, CloseKey,
-    KEY_WRITE, REG_DWORD, HKEY_LOCAL_MACHINE
-)
+
+import sys
 import ctypes
 import subprocess
 
+
+if sys.version_info.major > 2:
+    from winreg import (
+        ConnectRegistry, OpenKey, SetValueEx, CloseKey,
+        KEY_WRITE, REG_DWORD, HKEY_LOCAL_MACHINE
+    )
+else:
+    from _winreg import (
+        ConnectRegistry, OpenKey, SetValueEx, CloseKey,
+        KEY_WRITE, REG_DWORD, HKEY_LOCAL_MACHINE
+    )
+
+
 def check_if_admin():
     return ctypes.windll.shell32.IsUserAnAdmin() != 0
+
 
 def setRegValue(aReg, keyPath, regPath, value):
     try:
@@ -20,6 +32,7 @@ def setRegValue(aReg, keyPath, regPath, value):
         return True
     except:
         return False
+
 
 def modifyKey(keyPath, regPath, value, root=HKEY_LOCAL_MACHINE):
     aReg = ConnectRegistry(None, root)
@@ -31,15 +44,18 @@ def modifyKey(keyPath, regPath, value, root=HKEY_LOCAL_MACHINE):
     CloseKey(aReg)
     return True
 
+
 def executeCmd(cmd):
-    command=['cmd.exe', '/c'] + cmd.split()
-    res = subprocess.check_output(command, stderr=subprocess.STDOUT, stdin=subprocess.PIPE, universal_newlines=True)
-    # info=subprocess.STARTUPINFO()
-    # info.dwFlags=subprocess.STARTF_USESHOWWINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
-    # info.wShowWindow=subprocess.SW_HIDE
-    # p=subprocess.Popen(command, startupinfo=info, stderr=subprocess.STDOUT, stdout=subprocess.PIPE, universal_newlines=True)
-    # results, _=p.communicate()
+    command = ['cmd.exe', '/c'] + cmd.split()
+    res = subprocess.check_output(
+        command,
+        stderr=subprocess.STDOUT,
+        stdin=subprocess.PIPE,
+        universal_newlines=True
+    )
+
     return res
+
 
 def enable_rdp():
     # enable RDP
@@ -76,7 +92,6 @@ def disable_rdp():
             print('[-] Failed to disable NLA authentication')
     else:
         print('[-] Failed to change the rdp key')
-
 
 
 # www.vladan.fr/multiple-rdp-sessions-on-windows/

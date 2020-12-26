@@ -3,8 +3,13 @@ from __future__ import division
 from __future__ import print_function
 from __future__ import unicode_literals
 
-import _winreg
+import sys
 import psutil
+
+if sys.version_info.major > 2:
+    import _winreg as winreg
+else:
+    import _winreg
 
 HKEY_LOCAL_MACHINE = -2147483646
 KEY_READ           = 131097
@@ -23,7 +28,7 @@ class Check_VM():
 
     def check_existing_key(self, k, key):
         try:
-            hkey = _winreg.OpenKey(k, key, 0, KEY_READ)
+            hkey = winreg.OpenKey(k, key, 0, KEY_READ)
             return hkey
         except:
             return False
@@ -44,12 +49,12 @@ class Check_VM():
         for key in keys:
             h = self.check_existing_key(HKEY_LOCAL_MACHINE, key)
             if h:
-                _winreg.CloseKey(h)
+                winreg.CloseKey(h)
                 return True
 
         h = self.check_existing_key(HKEY_LOCAL_MACHINE, 'HARDWARE\\DESCRIPTION\\System')
         if h:
-            string = str(_winreg.QueryValueEx(h, 'SystemBiosVersion')[0])
+            string = str(winreg.QueryValueEx(h, 'SystemBiosVersion')[0])
             if 'vrtual' in string:
                 return True
 
@@ -67,12 +72,12 @@ class Check_VM():
         for key in keys:
             h = self.check_existing_key(HKEY_LOCAL_MACHINE, key)
             if h:
-                _winreg.CloseKey(h)
+                winreg.CloseKey(h)
                 return True
 
         h = self.check_existing_key(HKEY_LOCAL_MACHINE, 'HARDWARE\\DESCRIPTION\\System\\BIOS')
         if h:
-            string = str(_winreg.QueryValueEx(h, 'SystemManufacturer')[0])
+            string = str(winreg.QueryValueEx(h, 'SystemManufacturer')[0])
             if 'vmware' in string:
                 return True
 
@@ -94,7 +99,7 @@ class Check_VM():
         for key in keys:
             h = self.check_existing_key(HKEY_LOCAL_MACHINE, key)
             if h:
-                _winreg.CloseKey(h)
+                winreg.CloseKey(h)
                 return True
 
     # Virtual Box
@@ -114,12 +119,12 @@ class Check_VM():
         for key in keys:
             h = self.check_existing_key(HKEY_LOCAL_MACHINE, key)
             if h:
-                _winreg.CloseKey(h)
+                winreg.CloseKey(h)
                 return True
 
         h = self.check_existing_key(HKEY_LOCAL_MACHINE, 'HARDWARE\\DESCRIPTION\\System')
         if h:
-            string = str(_winreg.QueryValueEx(h, 'SystemBiosVersion')[0])
+            string = str(winreg.QueryValueEx(h, 'SystemBiosVersion')[0])
             if 'vbox' in string:
                 return True
 
@@ -142,19 +147,19 @@ class Check_VM():
         for key in keys:
             h = self.check_existing_key(HKEY_LOCAL_MACHINE, key)
             if h:
-                _winreg.CloseKey(h)
+                winreg.CloseKey(h)
                 return True
 
     # QEMU
     def check_qemu(self):
         h = self.check_existing_key(HKEY_LOCAL_MACHINE, 'HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\0')
         if h:
-            string = str(_winreg.QueryValueEx(h, 'ProcessorNameString')[0])
+            string = str(winreg.QueryValueEx(h, 'ProcessorNameString')[0])
             if 'vmware' in string:
                 return True
         h = self.check_existing_key(HKEY_LOCAL_MACHINE, 'HARDWARE\\DESCRIPTION\\System\\BIOS')
         if h:
-            string = str(_winreg.QueryValueEx(h, 'SystemManufacturer')[0])
+            string = str(winreg.QueryValueEx(h, 'SystemManufacturer')[0])
             if 'qemu' in string.lower():
                 return True
 

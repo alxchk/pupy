@@ -2,10 +2,20 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 from __future__ import unicode_literals
-from _winreg import (
-    HKEY_LOCAL_MACHINE, KEY_READ, KEY_WRITE, REG_DWORD,
-    ConnectRegistry, OpenKey, SetValueEx, CloseKey, QueryValueEx
-)
+
+import sys
+
+if sys.version_info.major > 2:
+    from winreg import (
+        HKEY_LOCAL_MACHINE, KEY_READ, KEY_WRITE, REG_DWORD,
+        ConnectRegistry, OpenKey, SetValueEx, CloseKey, QueryValueEx
+    )
+else:
+    from _winreg import (
+        HKEY_LOCAL_MACHINE, KEY_READ, KEY_WRITE, REG_DWORD,
+        ConnectRegistry, OpenKey, SetValueEx, CloseKey, QueryValueEx
+    )
+
 
 def modifyKey(keyPath, regPath, value, root=HKEY_LOCAL_MACHINE):
     aReg = ConnectRegistry(None, root)
@@ -32,6 +42,7 @@ def queryValue(keyPath, regPath, root=HKEY_LOCAL_MACHINE):
             return True, 'UseLogonCredential already enabled'
     except:
         return False, 'UseLogonCredential key not found, you should create it'
+
 
 def wdigest(action):
     key_path = r"SYSTEM\\CurrentControlSet\\Control\\SecurityProviders\\WDigest\\"

@@ -10,6 +10,7 @@ from __future__ import unicode_literals
 __all__ = ('dnsinfo',)
 
 import sys
+
 from io import open
 
 
@@ -202,7 +203,10 @@ def _win32_is_nic_enabled(_winreg, lm, guid, interface_key):
 
 def _parse_registry():
     """Extract resolver configuration from the Windows registry."""
-    _winreg = __import__('_winreg')
+
+    _winreg = __import__(
+        'winreg' if sys.version_info.major > 2 else '_winreg'
+    )
 
     lm = _winreg.ConnectRegistry(None, _winreg.HKEY_LOCAL_MACHINE)
     want_scan = False

@@ -2,17 +2,29 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 from __future__ import unicode_literals
-from _winreg import (
-    ConnectRegistry, OpenKey, CreateKey, SetValueEx,
-    DeleteKey, CloseKey,
-    HKEY_CURRENT_USER, KEY_SET_VALUE, KEY_WRITE,
-    REG_SZ
-)
 
 import subprocess
 import ctypes
 import time
 import os
+import sys
+
+
+if sys.version_info.major > 2:
+    from winreg import (
+        ConnectRegistry, OpenKey, CreateKey, SetValueEx,
+        DeleteKey, CloseKey,
+        HKEY_CURRENT_USER, KEY_SET_VALUE, KEY_WRITE,
+        REG_SZ
+    )
+else:
+    from _winreg import (
+        ConnectRegistry, OpenKey, CreateKey, SetValueEx,
+        DeleteKey, CloseKey,
+        HKEY_CURRENT_USER, KEY_SET_VALUE, KEY_WRITE,
+        REG_SZ
+    )
+
 
 def registry_hijacking_fodhelper(cmd, params=""):
 

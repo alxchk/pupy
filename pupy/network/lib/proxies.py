@@ -18,6 +18,7 @@ __all__ = (
 import re
 import os
 import time
+import sys
 
 from io import open
 from collections import namedtuple
@@ -100,8 +101,16 @@ def parse_win_proxy(val):
 
 def get_win_proxies():
     try:
-        from _winreg import EnumKey, OpenKey, CloseKey, QueryValueEx
-        from _winreg import HKEY_USERS, KEY_QUERY_VALUE
+        if sys.version_info.major > 2:
+            from winreg import (
+                EnumKey, OpenKey, CloseKey, QueryValueEx,
+                HKEY_USERS, KEY_QUERY_VALUE
+            )
+        else:
+            from _winreg import (
+                EnumKey, OpenKey, CloseKey, QueryValueEx,
+                HKEY_USERS, KEY_QUERY_VALUE
+            )
     except:
         return
 

@@ -86,7 +86,11 @@ WPAD_REFRESH_TIMEOUT = 3600
 
 def get_autoconfig_url_nt():
     try:
-        from _winreg import OpenKey, QueryValueEx, HKEY_CURRENT_USER
+        if version_info.major > 2:
+            from winreg import OpenKey, QueryValueEx, HKEY_CURRENT_USER
+        else:
+            from _winreg import OpenKey, QueryValueEx, HKEY_CURRENT_USER
+
     except ImportError:
         return
 
