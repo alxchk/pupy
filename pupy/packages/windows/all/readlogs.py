@@ -14,6 +14,7 @@ import re
 from winerror import HRESULT_CODE
 
 from time import time
+from datetime import datetime
 
 from pupwinutils.security import namebysid
 try:
@@ -29,10 +30,14 @@ from win32con import (
     FORMAT_MESSAGE_FROM_HMODULE, LOAD_LIBRARY_AS_DATAFILE
 )
 
-from sys import getdefaultencoding, version_info
+from sys import version_info
 from os.path import expandvars, isfile
 from socket import gethostbyaddr
 from socket import error as socket_error
+
+from network.lib.convcompat import (
+    fs_as_unicode_string, fs_as_native_string
+)
 
 from win32con import (
     EVENTLOG_AUDIT_FAILURE,
@@ -42,11 +47,6 @@ from win32con import (
     EVENTLOG_ERROR_TYPE
 )
 
-from _winreg import (
-    OpenKeyEx, EnumKey, CloseKey, QueryValueEx,
-    HKEY_LOCAL_MACHINE, KEY_READ
-)
-
 from win32evtlog import (
     OpenEventLog, ReadEventLog, CloseEventLog,
     GetNumberOfEventLogRecords,
@@ -54,9 +54,22 @@ from win32evtlog import (
 )
 
 if version_info.major > 2:
+    from winreg import (
+        OpenKeyEx, EnumKey, CloseKey, QueryValueEx,
+        HKEY_LOCAL_MACHINE, KEY_READ
+    )
+
     basestring = str
     unicode = str
-    long = int
+    numbers = int
+else:
+    from _winreg import (
+        OpenKeyEx, EnumKey, CloseKey, QueryValueEx,
+        HKEY_LOCAL_MACHINE, KEY_READ
+    )
+
+    numbers = (long, int)
+
 
 LANGID = MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL)
 BLACKLIST = (
@@ -144,7 +157,7 @@ class EventLog(object):
 
         key = OpenKeyEx(
             HKEY_LOCAL_MACHINE,
-            ur'SYSTEM\CurrentControlSet\Services\EventLog',
+            r'SYSTEM\CurrentControlSet\Services\EventLog',
             0, KEY_READ
         )
 
@@ -153,13 +166,13 @@ class EventLog(object):
             while idx < self._max_iters:
                 try:
                     source = EnumKey(key, idx)
+
                     if source in dups:
                         continue
 
                     dups.add(source)
 
-                    if type(source) == str:
-                        source = source.decode(getdefaultencoding())
+                    source = fs_as_unicode_string(source)
 
                     yield source
 
@@ -220,7 +233,7 @@ class EventLog(object):
 
     def get_events(self, logtype, server='', filter_event_id=None, fmt=True, filter_source=None):
         if filter_event_id is not None:
-            if isinstance(filter_event_id, (int, long)):
+            if isinstance(filter_event_id, numbers):
                 filter_event_id = {filter_event_id}
             elif isinstance(filter_event_id, basestring):
                 if ',' in filter_event_id:
@@ -272,18 +285,12 @@ class EventLog(object):
 
                     if fmt and ev_obj.SourceName not in self._formatters_cache \
                           and ev_obj.SourceName not in BLACKLIST:
-                        source_name = ev_obj.SourceName
-                        if type(source_name) == str:
-                            source_name = source_name.decode(getdefaultencoding())
-
-                        subkey = ur'SYSTEM\CurrentControlSet\Services\EventLog\{}\{}'.format(
+                        source_name = fs_as_unicode_string(ev_obj.SourceName)
+                        subkey = r'SYSTEM\CurrentControlSet\Services\EventLog\{}\{}'.format(
                             logtype, source_name
                         )
 
-                        try:
-                            subkey = subkey.encode(getdefaultencoding())
-                        except UnicodeEncodeError:
-                            subkey = subkey.encode('utf-8')
+                        subkey = fs_as_native_string(subkey)
 
                         try:
                             key = OpenKeyEx(HKEY_LOCAL_MACHINE, subkey, 0, KEY_READ)
@@ -354,7 +361,7 @@ class EventLog(object):
                     yield {
                         'EventID': event_id,
                         'record': ev_obj.RecordNumber,
-                        'date': int(ev_obj.TimeGenerated),
+                        'date': int(datetime.timestamp(ev_obj.TimeGenerated)),
                         'computer': ev_obj.ComputerName,
                         'category': ev_obj.EventCategory,
                         'msg': message,
