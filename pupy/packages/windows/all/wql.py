@@ -34,7 +34,7 @@ def execute_final(query):
             tuple(
                 (
                     try_as_unicode_string(column),
-                    try_as_unicode_string(getattr(item, column))
+                    try_as_unicode_string(getattr(item, column), fail=False)
                 ) for column in item.properties
             )
         )
