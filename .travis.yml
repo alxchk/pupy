@@ -34,6 +34,7 @@ after_success:
   cd $TRAVIS_BUILD_DIR/pupy &&
   docker push alxchk/pupy:$TAG >/dev/null;
   docker push alxchk/pupy:base-$TAG >/dev/null;
+  docker push alxchk/pupy-python2-env:$TAG;
   fi
 env:
   global:
